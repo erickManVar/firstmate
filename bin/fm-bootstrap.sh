@@ -82,9 +82,11 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
-PROJECTS="${FM_PROJECTS_OVERRIDE:-$FM_HOME/projects}"
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
+# shellcheck source=bin/fm-projects-lib.sh disable=SC1091
+. "$SCRIPT_DIR/fm-projects-lib.sh"
+PROJECTS=$(fm_projects_root) || exit 1
 # shellcheck source=bin/fm-tasks-axi-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
 # shellcheck source=bin/fm-tangle-lib.sh disable=SC1091
@@ -99,15 +101,17 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-backend.sh"
 
 fleet_sync_origin_backed_project_count() {
-  local count proj
+  local count proj name
   count=0
   [ -d "$PROJECTS" ] || { echo 0; return 0; }
-  for proj in "$PROJECTS"/*; do
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    proj=$(fm_project_path "$name") || continue
     [ -d "$proj" ] || continue
     git -C "$proj" rev-parse --git-dir >/dev/null 2>&1 || continue
     git -C "$proj" remote get-url origin >/dev/null 2>&1 || continue
     count=$((count + 1))
-  done
+  done < <(fm_project_registry_names)
   echo "$count"
 }
 

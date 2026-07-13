@@ -70,6 +70,9 @@ FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
+# shellcheck source=bin/fm-projects-lib.sh
+. "$SCRIPT_DIR/fm-projects-lib.sh"
+PROJECTS_MODE=$(fm_projects_mode) || exit 1
 KIND=ship
 HERDR_LAB=0
 NO_PROJECTS=0
@@ -122,11 +125,15 @@ fi
 SECONDMATE_CHARTER=${FM_SECONDMATE_CHARTER:-"{TASK}"}
 SECONDMATE_SCOPE=${FM_SECONDMATE_SCOPE:-${FM_SECONDMATE_CHARTER:-"{TASK}"}}
 if [ "$NO_PROJECTS" -eq 1 ]; then
-  PROJECT_CLONES_BODY="None. This is a project-less domain: its subject is the firstmate repo this home lives in, so it needs no separate clones under \`projects/\`; its crews take pooled worktrees of that firstmate repo."
-  PROJECT_CLONES_NOTE="This domain has no separate project clones: its subject is the firstmate repo this home lives in, and its crews take pooled worktrees of that repo."
+  PROJECT_ACCESS_BODY="None. This is a project-less domain: its subject is the firstmate repo this home lives in, so its crews take pooled worktrees of that firstmate repo."
+  PROJECT_ACCESS_NOTE="This domain has no separate project access list: its subject is the firstmate repo this home lives in, and its crews take pooled worktrees of that repo."
 else
-  PROJECT_CLONES_BODY=$(printf '%s\n' "$SECONDMATE_PROJECTS" | tr ' ' '\n' | sed 's/^/- /')
-  PROJECT_CLONES_NOTE="The projects above are local clones for work you supervise; they are not an exclusive ownership claim."
+  PROJECT_ACCESS_BODY=$(printf '%s\n' "$SECONDMATE_PROJECTS" | tr ' ' '\n' | sed 's/^/- /')
+  if [ "$PROJECTS_MODE" = shared-external ]; then
+    PROJECT_ACCESS_NOTE="The projects above resolve through the inherited shared project catalog. Treat the canonical checkouts as primary-owned and delegate changes through isolated task worktrees."
+  else
+    PROJECT_ACCESS_NOTE="The projects above are local clones for work you supervise; they are not an exclusive ownership claim."
+  fi
 fi
 cat > "$BRIEF" <<EOF
 You are a secondmate: a persistent domain supervisor managed by the main firstmate. Work on your own; do not wait for a human.
@@ -137,12 +144,12 @@ $SECONDMATE_CHARTER
 # Routing scope
 $SECONDMATE_SCOPE
 
-# Project clones
-$PROJECT_CLONES_BODY
+# Project access
+$PROJECT_ACCESS_BODY
 
 # Operating model
 You are in an isolated firstmate home. The local \`AGENTS.md\` is your job description, and your local \`data/\`, \`state/\`, \`config/\`, and \`projects/\` dirs are yours to operate.
-$PROJECT_CLONES_NOTE
+$PROJECT_ACCESS_NOTE
 Delegate project work to your own crewmates with the normal firstmate lifecycle: brief, spawn, status, watcher, steer, teardown, and recovery.
 Do not invent a second delegation system.
 You do not generate your own work.

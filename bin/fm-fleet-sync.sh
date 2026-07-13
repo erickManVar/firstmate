@@ -21,8 +21,8 @@
 # fetch_with_packed_refs_lock_guard and the FM_FLEET_SYNC_PACKED_REFS_LOCK_* knobs.
 # Usage: fm-fleet-sync.sh [<project-dir-or-name>]
 # The single-project form accepts either a path (absolute, or relative to the
-# caller's cwd) or a bare "<name>"/"projects/<name>" form, resolved against
-# this home's projects dir ($FM_HOME/projects, or $FM_PROJECTS_OVERRIDE).
+# caller's cwd) or a bare "<name>"/"projects/<name>" form, resolved through
+# bin/fm-projects-lib.sh.
 # Bare names and "projects/<name>" forms prefer this home's projects dir before
 # falling back to an explicit path. Example: from anywhere,
 # `fm-fleet-sync.sh dotfiles-private` syncs just that one clone, same as
@@ -32,7 +32,9 @@ set -eu
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
-PROJECTS="${FM_PROJECTS_OVERRIDE:-$FM_HOME/projects}"
+# shellcheck source=bin/fm-projects-lib.sh
+. "$SCRIPT_DIR/fm-projects-lib.sh"
+PROJECTS=$(fm_projects_root) || exit 1
 # shellcheck source=bin/fm-lock-lib.sh
 . "$SCRIPT_DIR/fm-lock-lib.sh"
 FM_LOCK_LOG_PREFIX=fleet-sync
@@ -64,7 +66,16 @@ if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
 fi
 [ $# -le 1 ] || { usage; exit 1; }
 
+if ! fm_projects_mutation_allowed; then
+  echo "fleet: skipped: shared project synchronization delegated to primary firstmate"
+  exit 0
+fi
+
 project_label() {
+  if [ -d "$PROJ" ]; then
+    basename "$PROJ"
+    return
+  fi
   case "$PROJ" in
     "$PROJECTS"/*) basename "$PROJ" ;;
     projects/*) basename "$PROJ" ;;
@@ -80,7 +91,7 @@ resolve_project_arg() {
   local arg=$1 candidate
   case "$arg" in
     projects/*)
-      candidate="$PROJECTS/${arg#projects/}"
+      candidate=$(fm_project_path "${arg#projects/}") || return 1
       if [ -d "$candidate" ]; then
         printf '%s\n' "$candidate"
         return 0
@@ -93,7 +104,7 @@ resolve_project_arg() {
       fi
       ;;
     *)
-      candidate="$PROJECTS/$arg"
+      candidate=$(fm_project_path "$arg") || return 1
       if [ -d "$candidate" ]; then
         printf '%s\n' "$candidate"
         return 0
@@ -423,8 +434,9 @@ if [ $# -eq 1 ]; then
 fi
 
 [ -d "$PROJECTS" ] || exit 0
-for proj in "$PROJECTS"/*; do
-  [ -e "$proj" ] || continue
+while IFS= read -r name; do
+  [ -n "$name" ] || continue
+  proj=$(fm_project_path "$name") || continue
   [ -d "$proj" ] || continue
   sync_project "$proj"
-done
+done < <(fm_project_registry_names)

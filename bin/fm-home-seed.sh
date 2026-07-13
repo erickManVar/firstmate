@@ -7,9 +7,11 @@
 #       a fresh firstmate worktree via "treehouse get --lease", which durably
 #       leases the worktree under the secondmate <id> so the home survives with
 #       no live process and is never recycled until the lease is released with
-#       "treehouse return". Projects are cloned
-#       from the active home into the secondmate home's projects/ directory.
-#       That project list is non-exclusive provisioning data. Pass --no-projects
+#       "treehouse return". With the legacy local catalog, projects are cloned
+#       into the secondmate home's projects/ directory. With config/projects-root,
+#       the inherited external catalog is validated and referenced without clone,
+#       initialization, synchronization, or rollback ownership. That project
+#       list is non-exclusive access data. Pass --no-projects
 #       instead of a project list to seed a project-less home for a domain whose
 #       subject is the firstmate repo itself; it is mutually exclusive with a
 #       project list, and omitting both still fails loudly. A project-less seed
@@ -35,7 +37,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
-PROJECTS="${FM_PROJECTS_OVERRIDE:-$FM_HOME/projects}"
+CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
+# shellcheck source=bin/fm-projects-lib.sh
+. "$SCRIPT_DIR/fm-projects-lib.sh"
+# shellcheck source=bin/fm-config-inherit-lib.sh
+. "$SCRIPT_DIR/fm-config-inherit-lib.sh"
+PROJECTS=$(fm_projects_root) || exit 1
+PROJECTS_MODE=$(fm_projects_mode) || exit 1
 REG="$DATA/secondmates.md"
 SUB_HOME_MARKER=".fm-secondmate-home"
 
@@ -535,7 +543,7 @@ EOF
 
 clone_project() {
   local project=$1 home=$2 src dst url dst_url mode
-  src="$PROJECTS/$project"
+  src=$(fm_project_path "$project") || return 1
   dst=$(validate_project_destination "$home" "$project") || return 1
   [ -d "$src" ] || { echo "error: project $project not found at $src" >&2; return 1; }
   git -C "$src" rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "error: project $project is not a git repo" >&2; return 1; }
@@ -563,7 +571,11 @@ EOF
 
 validate_seed_project() {
   local project=$1 src mode url
-  src="$PROJECTS/$project"
+  fm_project_name_valid "$project" || {
+    echo "error: unsafe project name: $project" >&2
+    return 1
+  }
+  src=$(fm_project_path "$project") || return 1
   [ -d "$src" ] || { echo "error: project $project not found at $src" >&2; return 1; }
   git -C "$src" rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "error: project $project is not a git repo" >&2; return 1; }
   read -r mode _ <<EOF
@@ -575,6 +587,12 @@ EOF
   fi
   url=$(git -C "$src" remote get-url origin 2>/dev/null || true)
   [ -n "$url" ] || { echo "error: project $project is $mode but has no origin remote" >&2; return 1; }
+  if [ "$PROJECTS_MODE" = shared-external ] && [ "$mode" = no-mistakes ]; then
+    git -C "$src" remote get-url no-mistakes >/dev/null 2>&1 || {
+      echo "error: shared project $project is not initialized for no-mistakes; refusing to mutate the external checkout" >&2
+      return 1
+    }
+  fi
 }
 
 SEED_ROLLBACK_ACTIVE=0
@@ -592,6 +610,7 @@ SEED_PARENT_BRIEF_DIR_CREATED=0
 SEED_SUB_REG_EXISTED=0
 SEED_CHARTER_EXISTED=0
 SEED_MARKER_EXISTED=0
+SEED_PROJECTS_ROOT_EXISTED=0
 
 restore_seed_file() {
   local existed=$1 backup=$2 path=$3
@@ -713,6 +732,7 @@ seed_rollback() {
         restore_seed_file "$SEED_MARKER_EXISTED" "$SEED_BACKUP_DIR/marker" "$SEED_HOME/$SUB_HOME_MARKER"
         restore_seed_file "$SEED_CHARTER_EXISTED" "$SEED_BACKUP_DIR/charter.md" "$SEED_HOME/data/charter.md"
         restore_seed_file "$SEED_SUB_REG_EXISTED" "$SEED_BACKUP_DIR/sub-projects.md" "$SEED_HOME/data/projects.md"
+        restore_seed_file "$SEED_PROJECTS_ROOT_EXISTED" "$SEED_BACKUP_DIR/projects-root" "$SEED_HOME/config/projects-root"
       fi
     fi
   fi
@@ -848,10 +868,11 @@ refuse_populated_projectless_home() {
 }
 
 refuse_projectful_projectless_charter() {
-  local id=$1 brief=$2 project_clones
-  project_clones=$(brief_section_text "$brief" "Project clones")
-  if printf '%s\n' "$project_clones" | grep -F 'None. This is a project-less domain' >/dev/null 2>&1 \
-    && ! printf '%s\n' "$project_clones" | grep -Eq '^[[:space:]]*-[[:space:]]+'; then
+  local id=$1 brief=$2 project_access
+  project_access=$(brief_section_text "$brief" "Project access")
+  [ -n "$project_access" ] || project_access=$(brief_section_text "$brief" "Project clones")
+  if printf '%s\n' "$project_access" | grep -F 'None. This is a project-less domain' >/dev/null 2>&1 \
+    && ! printf '%s\n' "$project_access" | grep -Eq '^[[:space:]]*-[[:space:]]+'; then
     return 0
   fi
   printf 'error: cannot seed project-less secondmate home because existing charter brief at %s conflicts with --no-projects\n' "$brief" >&2
@@ -861,6 +882,7 @@ refuse_projectful_projectless_charter() {
 
 seed_home() {
   local id=$1 requested_home=$2 requested_abs home projects_csv project project_dst charter_summary charter_scope
+  local inherited_projects expected_projects
   local no_projects=0 arg
   local filtered=()
   shift 2
@@ -906,6 +928,7 @@ seed_home() {
   SEED_SUB_REG_EXISTED=0
   SEED_CHARTER_EXISTED=0
   SEED_MARKER_EXISTED=0
+  SEED_PROJECTS_ROOT_EXISTED=0
   trap seed_rollback EXIT
   if [ -f "$REG" ]; then
     SEED_PARENT_REG_EXISTED=1
@@ -949,7 +972,41 @@ seed_home() {
     SEED_MARKER_EXISTED=1
     cp "$home/$SUB_HOME_MARKER" "$SEED_BACKUP_DIR/marker"
   fi
+  if [ -L "$home/config/projects-root" ]; then
+    echo "error: secondmate projects-root config must not be a symlink: $home/config/projects-root" >&2
+    return 1
+  fi
+  if [ -e "$home/config/projects-root" ] && [ ! -f "$home/config/projects-root" ]; then
+    echo "error: secondmate projects-root config must be a regular file: $home/config/projects-root" >&2
+    return 1
+  fi
+  if [ -f "$home/config/projects-root" ]; then
+    SEED_PROJECTS_ROOT_EXISTED=1
+    cp "$home/config/projects-root" "$SEED_BACKUP_DIR/projects-root"
+  fi
   SEED_HOME_BACKED_UP=1
+
+  if [ "$PROJECTS_MODE" = shared-external ] && [ ! -f "$CONFIG/projects-root" ]; then
+    echo "error: shared secondmate seeding requires a durable config/projects-root; FM_PROJECTS_OVERRIDE alone is not inherited" >&2
+    return 1
+  fi
+  FM_INHERITABLE_CONFIG=projects-root \
+    propagate_inheritable_config "$CONFIG" "$home/config" || {
+      echo "error: failed to inherit projects-root into secondmate home $home" >&2
+      return 1
+    }
+  if [ "$PROJECTS_MODE" = shared-external ]; then
+    inherited_projects=$(FM_HOME="$home" FM_CONFIG_OVERRIDE= FM_PROJECTS_OVERRIDE= fm_projects_root) || {
+      echo "error: secondmate home $home cannot resolve its inherited projects-root" >&2
+      return 1
+    }
+    expected_projects=$(fm_projects_normalize_path "$PROJECTS") || return 1
+    inherited_projects=$(fm_projects_normalize_path "$inherited_projects") || return 1
+    [ "$inherited_projects" = "$expected_projects" ] || {
+      echo "error: secondmate home $home did not inherit the primary projects-root" >&2
+      return 1
+    }
+  fi
 
   if [ ! -f "$SEED_PARENT_BRIEF" ]; then
     [ -n "${FM_SECONDMATE_CHARTER:-}" ] || {
@@ -979,20 +1036,24 @@ seed_home() {
     return 1
   }
 
-  for project in "$@"; do
-    project_dst=$(validate_project_destination "$home" "$project") || return 1
-    [ -e "$project_dst" ] || printf '%s\n' "$project_dst" >> "$SEED_CREATED_PROJECTS_FILE"
-    clone_project "$project" "$home"
-  done
+  if [ "$PROJECTS_MODE" = legacy-local ]; then
+    for project in "$@"; do
+      project_dst=$(validate_project_destination "$home" "$project") || return 1
+      [ -e "$project_dst" ] || printf '%s\n' "$project_dst" >> "$SEED_CREATED_PROJECTS_FILE"
+      clone_project "$project" "$home"
+    done
+  fi
   sync_project_registry "$home" "$@"
-  for project in "$@"; do
-    project_dst=$(validate_project_destination "$home" "$project") || return 1
-    if seed_project_was_created "$project_dst"; then
-      initialize_no_mistakes_project "$home" "$project" 1
-    else
-      initialize_no_mistakes_project "$home" "$project" 0
-    fi
-  done
+  if [ "$PROJECTS_MODE" = legacy-local ]; then
+    for project in "$@"; do
+      project_dst=$(validate_project_destination "$home" "$project") || return 1
+      if seed_project_was_created "$project_dst"; then
+        initialize_no_mistakes_project "$home" "$project" 1
+      else
+        initialize_no_mistakes_project "$home" "$project" 0
+      fi
+    done
+  fi
 
   cp "$SEED_PARENT_BRIEF" "$home/data/charter.md"
 

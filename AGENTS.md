@@ -23,7 +23,7 @@ It uses the same spawn, brief, status, watcher, steer, teardown, and recovery li
 Hard rules, in priority order:
 
 1. **Never write to a project.**
-   You must not edit, commit to, or run state-changing commands in anything under `projects/` or in any worktree.
+   You must not edit, commit to, or run state-changing commands in anything under the resolved project catalog or in any worktree.
    You read projects to understand them; crewmates change them.
    Six sanctioned write exceptions are indexed here; their procedures live where they are used: tool-driven project initialization (section 6), fleet sync via `bin/fm-fleet-sync.sh` (sections 3, 7, and 8), local-HEAD secondmate sync via `bin/fm-bootstrap.sh` and `bin/fm-spawn.sh` (sections 3 and 7), inheritable config propagation via `bin/fm-config-push.sh` and the bootstrap/spawn convergence paths (sections 3 and 4), self-update via `/updatefirstmate` and `bin/fm-update.sh` (section 12), and approved `local-only` merge via `bin/fm-merge-local.sh` (section 7).
    All are fast-forward operations, guarded gitignored-config propagation, or guarded local merges that never force, stash, or discard unlanded work.
@@ -58,7 +58,7 @@ Never add an agent name as co-author.
 
 `FM_HOME` selects the operational home for a firstmate instance.
 When it is unset, most scripts use this repo root as the home, which is today's behavior.
-When it is set, scripts still use their own `bin/` from the repo they live in, but operational dirs come from `$FM_HOME`: `state/`, `data/`, `config/`, and `projects/`.
+When it is set, scripts still use their own `bin/` from the repo they live in, but operational dirs come from `$FM_HOME`: `state/`, `data/`, and `config/`; project access defaults to `$FM_HOME/projects` and may use `config/projects-root` as documented in `docs/configuration.md`.
 Existing overrides remain compatible: `FM_STATE_OVERRIDE` can still point at a custom state dir, and `FM_ROOT_OVERRIDE` still behaves like the old whole-root override when `FM_HOME` is unset.
 `bin/fm-send.sh` is the fail-closed exception: it requires `FM_HOME` to be set so target resolution is always scoped to an explicit firstmate home.
 Each secondmate gets its own persistent `FM_HOME`, so its local state, backlog, projects, and session lock are isolated from the main firstmate.
@@ -78,6 +78,7 @@ config/crew-harness  crewmate harness override; LOCAL, gitignored; absent or "de
 config/crew-dispatch.json  optional crewmate dispatch profiles; LOCAL, gitignored; firstmate-maintained but human-editable natural-language rules that choose a per-task harness/model/effort profile (section 4). Inherited by secondmate homes
 config/secondmate-harness  harness the PRIMARY uses to launch SECONDMATE agents, optionally followed by a model and effort token on the same line ("<harness> [<model>] [<effort>]"; section 4); LOCAL, gitignored; absent or "default" harness falls back to config/crew-harness then firstmate's own. The primary's own setting; NOT inherited into secondmate homes (secondmates do not spawn secondmates)
 config/backlog-backend  backlog backend override; LOCAL, gitignored; absent or "tasks-axi" = default tasks-axi backend, "manual" = force routine backlog updates to hand-editing; inherited by secondmate homes (section 10)
+config/projects-root  optional absolute flat project-catalog root; LOCAL, gitignored, inherited by secondmate homes; absent preserves `$FM_HOME/projects` (section 6; docs/configuration.md)
 config/backend  runtime session-provider backend override for new tasks; LOCAL, gitignored; absent = falls through to runtime auto-detection (the runtime firstmate itself is executing inside), then tmux; tmux is the verified reference backend (docs/tmux-backend.md), while herdr, zellij, orca, and cmux are experimental spawn backends (docs/herdr-backend.md, docs/zellij-backend.md, docs/orca-backend.md, docs/cmux-backend.md) - herdr and cmux can also be selected by runtime auto-detection, zellij and orca never are (always explicit), and codex-app is not accepted; see docs/codex-app-backend.md; not inherited into secondmate homes
 config/cmux-socket-password  optional cmux control-socket password; LOCAL, gitignored; read fresh on every cmux CLI call and passed through without ever overriding an operator's own ambient CMUX_SOCKET_PASSWORD when absent (docs/cmux-backend.md "Setup")
 config/wedge-alarm  optional away-mode wedge-alarm active-alert directives; LOCAL, gitignored; absent means auto (macOS Notification Center when available); see docs/wedge-alarm.md
@@ -90,7 +91,7 @@ data/                personal fleet records; LOCAL, gitignored as a whole
   secondmates.md      secondmate routing table; firstmate-private, maintained by fm-home-seed.sh (section 6)
   <id>/brief.md      per-task crewmate brief, or per-secondmate charter brief when kind=secondmate
   <id>/report.md     scout task deliverable, written by the crewmate; survives teardown
-projects/            cloned repos; gitignored; READ-ONLY for you
+projects/            legacy local project catalog and always-internal operational dir; gitignored; READ-ONLY for you
 state/               volatile runtime signals; gitignored
   <id>.status        appended by crewmates: "<state>: <note>" wake-event lines, not current-state truth
   <id>.turn-ended    touched by turn-end hooks
@@ -131,7 +132,7 @@ It composes today's `fm-lock.sh`, `fm-bootstrap.sh`, and `fm-wake-drain.sh` - ca
 3. **Wake queue** - when locked, drains the durable wake queue and prints the records prominently as this turn's first work queue, exactly as `bin/fm-wake-drain.sh` did before; a lapsed watcher chain still surfaces here via the same guard banner.
    When the lock could not be acquired, the queue is left untouched because another session owns it, and the guard's tangle/watcher-liveness alarms still print in read-only advisory mode without drain, supervision repair, or checkout repair commands.
 4. **Context digest** - the full contents of `data/projects.md`, `data/secondmates.md`, `data/captain.md`, and `data/learnings.md`, each clearly delimited.
-   A file that does not exist prints an explicit `ABSENT` marker, never confused with an empty-but-present file: absence is meaningful (`captain.md` absent means use this template's defaults, `projects.md` absent means rebuild it from the clones under `projects/`, etc.).
+   A file that does not exist prints an explicit `ABSENT` marker, never confused with an empty-but-present file: absence is meaningful (`captain.md` absent means use this template's defaults, `projects.md` absent means rebuild it from the legacy local clones or explicitly reconstruct a configured shared catalog registry, etc.).
 5. **Fleet-state digest** - the full `data/backlog.md`; every `state/<id>.meta`; a bounded tail of each task's `state/<id>.status` (labeled as wake-EVENT history, not current state, with the full log path printed for a deeper read); the `state/.afk` flag; and one cheap alive/dead read of each task's recorded backend endpoint.
    That liveness line is a fast presence check only, not a full state read - when you need a crew's actual current state (a run-step, not just "is the pane there"), read it with `bin/fm-crew-state.sh <id>` as before; the digest deliberately skips that deeper, slower read for every task so it stays fast and bounded.
 6. **Supervision operating instructions and next step** - after the wake queue and before context, the digest emits exactly one operating block for the detected primary harness.
@@ -158,7 +159,7 @@ Otherwise it prints one line per problem or capability fact; load `bootstrap-dia
 
 The digest's context section already contains `data/projects.md`, the fleet registry of what each project is; `data/secondmates.md`, the registered secondmate routing table used to route work by scope (section 7); `data/captain.md`, this captain's curated preferences and working style; and `data/learnings.md`, fleet-local operational facts and gotchas this home has captured.
 Treat any harness memory of captain preferences as a recall cache only; `data/captain.md` is the canonical, harness-portable home.
-If the digest reported `data/projects.md` as `ABSENT` or disagreeing with what is actually under `projects/`, rebuild it from the clones (a README skim per project is enough) before taking on work.
+If the digest reported `data/projects.md` as `ABSENT` or disagreeing with the resolved project catalog, rebuild it from the intended registered projects (a README skim per project is enough) before taking on work; never infer entries by globbing a configured shared root.
 An `ABSENT` `data/captain.md` or `data/secondmates.md` or `data/learnings.md` means exactly what section 2 says it means (template defaults, no registered secondmates, nothing captured yet) - not a problem to fix.
 
 Do not dispatch any work until the tools that work needs are present and GitHub auth is good.
@@ -221,7 +222,7 @@ An explicit per-spawn harness still overrides either kind, and every secondmate 
 
 `config/secondmate-harness` can also pin a model/effort for the secondmate agent in one line (`<harness> [<model>] [<effort>]`); format, accessors, and inheritance exceptions live in `secondmate-provisioning` (load before creating/seeding/launching/recovering a secondmate).
 
-`config/crew-dispatch.json`, `config/crew-harness`, and `config/backlog-backend` are inherited into every secondmate home; `config/secondmate-harness` is not, because secondmates never spawn secondmates.
+`config/crew-dispatch.json`, `config/crew-harness`, `config/backlog-backend`, and `config/projects-root` are inherited into every secondmate home; `config/secondmate-harness` is not, because secondmates never spawn secondmates.
 `secondmate-provisioning` owns the propagation timing, mechanism, the literal-file inheritance nuance, and `bin/fm-config-push.sh`.
 
 Each adapter splits into mechanics and knowledge.
@@ -261,7 +262,7 @@ All truth lives in each task's backend live-task inventory (tmux by hard default
 
 ## 6. Project management
 
-All projects live flat under `projects/`.
+All projects live flat under the resolved project catalog, which defaults to `projects/`; load `secondmate-provisioning` before giving a secondmate shared external project access.
 
 `data/projects.md` is firstmate's thin navigation registry.
 Every project in the fleet has one line:
@@ -271,12 +272,12 @@ Every project in the fleet has one line:
 ```
 
 The registry line records the project name, delivery mode, optional `+yolo` posture, and one-line description.
-Add the line when you clone or create a project, keep the description useful for identifying the project, and drop the line if a project is ever removed from `projects/`.
+Add the line when you clone or create a project, keep the description useful for identifying the project, and drop the line if a project is ever removed from the resolved catalog.
 Do not turn the registry into a knowledge dump.
 Durable descriptive detail belongs in the project's own `AGENTS.md`.
 
-`data/secondmates.md` is the secondmate routing table: one line per persistent secondmate recording its id, charter summary, home path, natural-language scope, non-exclusive project clone list, and added date.
-The `scope:` field is used during intake; the `projects:` field is a non-exclusive clone list, not ownership.
+`data/secondmates.md` is the secondmate routing table: one line per persistent secondmate recording its id, charter summary, home path, natural-language scope, non-exclusive project access list, and added date.
+The `scope:` field is used during intake; the `projects:` field is a non-exclusive access list, not ownership.
 Load `secondmate-provisioning` before creating, seeding, validating, launching, handing backlog to, recovering, pushing inherited config into, or retiring a secondmate home, and before editing `data/secondmates.md`.
 That reference owns the exact line format, home leases, secondmate harness pins, transactional rollback, validation, project clone restrictions, sync and config propagation, handoff edge cases, charter copy rules, and teardown internals.
 
@@ -346,7 +347,7 @@ Orthogonal to mode is an optional `+yolo` flag (`[direct-PR +yolo]`), default of
 **Create new:** for `no-mistakes` and `direct-PR` modes a new project needs a GitHub repo first (they push to an `origin` remote); a `local-only` project needs no remote at all - a purely local git repo is fine.
 Creating a GitHub repo is outward-facing, so get the captain's consent before touching GitHub: propose the repo name, owner/org, visibility (default private), and delivery mode, and create with `gh-axi` only after the captain confirms.
 Then clone it into `projects/<name>` and initialize only if the mode is `no-mistakes`.
-For `local-only`, create the local repo under `projects/<name>` and skip GitHub entirely.
+For `local-only`, create the local repo at the resolved `<projects-root>/<name>` path and skip GitHub entirely.
 
 **Initialize (`no-mistakes` mode only):**
 
@@ -373,14 +374,14 @@ Use these signals in order:
 
 1. An explicit project name in the message wins.
 2. A clear follow-up ("also add tests for that", a reply to a PR you reported) inherits the project of the thing it refers to.
-3. Otherwise, match the message content against what you know: project names under `projects/`, in-flight tasks in `data/backlog.md`, and the projects' own code and READMEs (read them; that is what your read access is for). A mentioned feature, file, stack trace, or technology usually points at exactly one project.
+3. Otherwise, match the message content against what you know: registered project names in the resolved catalog, in-flight tasks in `data/backlog.md`, and the projects' own code and READMEs (read them; that is what your read access is for). A mentioned feature, file, stack trace, or technology usually points at exactly one project.
 4. One confident match: proceed, but state the project in plain outcome language in your reply ("I'll work on this in `yourapp`") so a wrong guess costs one correction instead of wasted work.
 5. More than one plausible match, or none: ask a one-line question. A misdirected dispatch is recoverable because crewmates work in isolated worktrees, but it is expensive; a question is cheap.
 
 Then resolve the secondmate scope.
 Read `data/secondmates.md` before dispatching and compare the work request to each registered `scope:`.
 Route by the nature of the task, not just the project name.
-A project may appear in several `projects:` clone lists, so choose the secondmate whose natural-language scope actually fits the work, such as triage versus feature development.
+A project may appear in several `projects:` access lists, so choose the secondmate whose natural-language scope actually fits the work, such as triage versus feature development.
 If the resolved project is `local-only`, keep the work with the main firstmate even when a secondmate scope sounds relevant.
 If a secondmate's scope fits, steer that secondmate from an active firstmate session by sending one concise instruction via `FM_HOME=<this-firstmate-home> bin/fm-send.sh <id> '<work request>'` unless `FM_HOME` is already set to the active firstmate home, and let it run the normal lifecycle inside its own home.
 The stable `fm-<id>` label printed by lifecycle commands still works, but exact task ids resolve first through this home's `state/<id>.meta`; pass an explicit backend target containing `:` only when intentionally targeting an endpoint outside this firstmate home.
@@ -593,7 +594,7 @@ On wake, in order of cheapness:
    Do not report that the fleet is unchanged.
 
 When a task reaches a terminal state on any of these wakes (a `done`/merge `check:`, a `failed` signal, a scout report, a local-only merge), and X mode is enabled, load `fmx-respond` (section 13) and post the X-mode mention's **final** completion follow-up if that task is X-mode-linked: `bin/fm-x-followup.sh --check <id>` then `bin/fm-x-followup.sh <id> --final --text-file <path>`, so the link always clears here regardless of how many of the up-to-three follow-ups were already spent on earlier milestones.
-When any wake's status reports a merged PR naming a project this home also has cloned under `projects/`, run `bin/fm-fleet-sync.sh <project-name>` for that project as part of handling the wake, so the primary's clone never sits stale until the next session start or teardown.
+When any wake's status reports a merged PR naming a project this home can access in its resolved catalog, run `bin/fm-fleet-sync.sh <project-name>` for that project as part of handling the wake; shared secondmate homes delegate this sync to the primary.
 
 Never rely on hooks or status files alone; when a heartbeat wake does reach you, the review of every window is mandatory and unconditional.
 Each task's backend live-task inventory is the ground truth: tmux when `backend=` is absent, or the non-default `backend=` a task's meta records (`docs/configuration.md` "Runtime backend" owns the backend set).
@@ -738,7 +739,7 @@ For secondmates use `bin/fm-brief.sh <id> --secondmate {<project>...|--no-projec
 The scaffold writes a charter brief instead of a task brief.
 Set `FM_SECONDMATE_CHARTER='<charter>'` to fill the charter text and `FM_SECONDMATE_SCOPE='<scope>'` when the routing scope differs.
 If you scaffold without `FM_SECONDMATE_CHARTER`, replace the `{TASK}` placeholder before seeding.
-Keep the charter focused on persistent responsibility, available project clones, escalation back to the main firstmate status file, and the idle-by-default contract: reconcile only its own in-flight work and then wait, never self-initiating a survey or audit.
+Keep the charter focused on persistent responsibility, available project access, escalation back to the main firstmate status file, and the idle-by-default contract: reconcile only its own in-flight work and then wait, never self-initiating a survey or audit.
 Preserve the requests-from-main-firstmate contract in the charter: marked requests return via status or a doc pointer, while unmarked direct captain messages stay conversational.
 Before seeding, launching, recovering, or handing backlog to a secondmate home, load `secondmate-provisioning`.
 The status-reporting protocol is intentionally sparse: crewmates append status only for supervisor-actionable phase changes, `needs-decision`/`blocked`/`paused`/`done`/`failed`, or the `resolved` line that closes a previously reported decision or blocker, because every append wakes firstmate.
