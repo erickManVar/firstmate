@@ -35,15 +35,57 @@ test_resolver_precedence_and_safety() {
   out=$(resolver_call "$home" 'fm_projects_mode')
   [ "$out" = shared-external ] || fail "configured root was not classified shared-external"
 
+  printf '%s\n' "$home/projects" > "$home/config/projects-root"
+  out=$(resolver_call "$home" 'fm_projects_mode') \
+    || fail "configured legacy-path mode resolution failed"
+  [ "$out" = shared-external ] \
+    || fail "config/projects-root presence did not explicitly select shared-external mode"
+
   out=$(resolver_call "$home" 'fm_projects_root' FM_PROJECTS_OVERRIDE="$override") \
     || fail "override root resolution failed"
   [ "$out" = "$override" ] || fail "FM_PROJECTS_OVERRIDE did not have highest precedence"
+  out=$(resolver_call "$home" 'fm_projects_mode' FM_PROJECTS_OVERRIDE="$home/projects") \
+    || fail "legacy-path override mode resolution failed"
+  [ "$out" = shared-external ] \
+    || fail "FM_PROJECTS_OVERRIDE did not explicitly select shared-external mode"
+
+  rm "$home/config/projects-root"
+  out=$(resolver_call "$home" 'fm_projects_mode') || fail "absent config mode resolution failed"
+  [ "$out" = legacy-local ] || fail "genuinely absent config was not classified legacy-local"
 
   printf '%s\n' 'relative/catalog' > "$home/config/projects-root"
   if resolver_call "$home" 'fm_projects_root' > /dev/null 2>"$err"; then
     fail "relative config/projects-root was accepted"
   fi
   assert_grep 'must contain an absolute path' "$err" "relative root refusal was not explained"
+
+  rm "$home/config/projects-root"
+  ln -s "$home/config/missing-root" "$home/config/projects-root"
+  if resolver_call "$home" 'fm_projects_root' > /dev/null 2>"$err"; then
+    fail "dangling config/projects-root symlink fell back to the legacy root"
+  fi
+  assert_grep 'dangling symlink' "$err" "dangling root refusal was not explained"
+
+  rm "$home/config/projects-root"
+  mkdir "$home/config/projects-root"
+  if resolver_call "$home" 'fm_projects_root' > /dev/null 2>"$err"; then
+    fail "non-file config/projects-root fell back to the legacy root"
+  fi
+  assert_grep 'must be a regular file' "$err" "non-file root refusal was not explained"
+
+  rm -rf "$home/config/projects-root"
+  printf '%s\n' "$shared" > "$home/config/projects-root"
+  if resolver_call "$home" 'awk() { return 1; }; fm_projects_root' > /dev/null 2>"$err"; then
+    fail "config/projects-root read failure fell back to the legacy root"
+  fi
+  assert_grep 'failed to read configured projects root' "$err" \
+    "configured-root read failure was not explained"
+
+  if resolver_call "$home" 'pwd() { return 1; }; fm_projects_root' > /dev/null 2>"$err"; then
+    fail "config/projects-root normalization failure fell back to the legacy root"
+  fi
+  assert_grep 'failed to normalize configured projects root' "$err" \
+    "configured-root normalization failure was not explained"
 
   printf '%s\n' "$shared" > "$home/config/projects-root"
   mkdir -p "$shared/alpha" "$shared/firstmate" "$shared/.secondmates"
@@ -53,7 +95,7 @@ test_resolver_precedence_and_safety() {
   if resolver_call "$home" 'fm_project_path ../alpha' >/dev/null 2>"$err"; then
     fail "unsafe project name was accepted"
   fi
-  pass "project resolver preserves precedence, rejects unsafe config, and enumerates the registry only"
+  pass "project resolver preserves provenance, fails closed, and enumerates the registry only"
 }
 
 setup_shared_seed_world() {

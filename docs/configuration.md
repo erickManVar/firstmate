@@ -145,6 +145,8 @@ The full cmux home label also includes a short hash of the resolved `FM_ROOT` pa
 
 `config/projects-root` is optional, local, gitignored, and contains exactly one non-empty, non-comment absolute path to an existing flat project catalog.
 Project-root precedence is non-empty `FM_PROJECTS_OVERRIDE`, then `$FM_CONFIG_OVERRIDE/projects-root` or `$FM_HOME/config/projects-root`, then the legacy `$FM_HOME/projects` default.
+Either explicit source selects shared-catalog mode even when its value resolves to `$FM_HOME/projects`; only genuine config absence with no override selects legacy-local mode.
+An invalid, unreadable, dangling, or unresolvable `projects-root` fails closed instead of falling back to the legacy catalog.
 Each safe project name in `data/projects.md` maps to the same-named direct, non-symlink child of that resolved root.
 Configured shared roots are enumerated only through `data/projects.md`, so unrelated siblings such as `firstmate` and `.secondmates` are never treated as projects.
 Legacy homes with no registry retain the existing clone-directory discovery path so session start can request that the registry be rebuilt.

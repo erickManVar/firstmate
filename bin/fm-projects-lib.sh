@@ -56,14 +56,34 @@ fm_projects_legacy_root() {
 }
 
 fm_projects_configured_root() {
-  local file line count
+  local file line count normalized
   file="$(fm_projects_config_dir)/projects-root"
-  [ -f "$file" ] || return 1
-  line=$(awk '
+  if [ ! -e "$file" ]; then
+    if [ -L "$file" ]; then
+      fm_projects_error "configured projects root file is a dangling symlink: $file"
+      return 2
+    fi
+    return 1
+  fi
+  if [ ! -f "$file" ]; then
+    fm_projects_error "configured projects root must be a regular file: $file"
+    return 2
+  fi
+  if [ ! -r "$file" ]; then
+    fm_projects_error "configured projects root is unreadable: $file"
+    return 2
+  fi
+  if ! line=$(awk '
     /^[[:space:]]*($|#)/ { next }
     { sub(/^[[:space:]]+/, ""); sub(/[[:space:]]+$/, ""); print }
-  ' "$file") || return 1
-  count=$(printf '%s\n' "$line" | awk 'NF { n++ } END { print n+0 }')
+  ' "$file"); then
+    fm_projects_error "failed to read configured projects root: $file"
+    return 2
+  fi
+  if ! count=$(printf '%s\n' "$line" | awk 'NF { n++ } END { print n+0 }'); then
+    fm_projects_error "failed to parse configured projects root: $file"
+    return 2
+  fi
   if [ "$count" -ne 1 ]; then
     fm_projects_error "$file must contain exactly one non-empty, non-comment path"
     return 2
@@ -79,7 +99,11 @@ fm_projects_configured_root() {
     fm_projects_error "configured projects root is not a directory: $line"
     return 2
   }
-  fm_projects_normalize_path "$line"
+  if ! normalized=$(fm_projects_normalize_path "$line") || [ -z "$normalized" ]; then
+    fm_projects_error "failed to normalize configured projects root: $line"
+    return 2
+  fi
+  printf '%s\n' "$normalized"
 }
 
 fm_projects_root() {
@@ -101,16 +125,19 @@ fm_projects_root() {
 }
 
 fm_projects_mode() {
-  local root legacy
-  root=$(fm_projects_root) || return
-  legacy=$(fm_projects_legacy_root) || return
-  root=$(fm_projects_normalize_path "$root") || return
-  legacy=$(fm_projects_normalize_path "$legacy") || return
-  if [ "$root" = "$legacy" ]; then
-    printf 'legacy-local\n'
-  else
+  local rc
+  if [ -n "${FM_PROJECTS_OVERRIDE:-}" ]; then
     printf 'shared-external\n'
+    return
   fi
+  if fm_projects_configured_root >/dev/null; then
+    printf 'shared-external\n'
+    return
+  else
+    rc=$?
+  fi
+  [ "$rc" -eq 1 ] || return "$rc"
+  printf 'legacy-local\n'
 }
 
 fm_project_name_valid() {
