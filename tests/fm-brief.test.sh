@@ -181,7 +181,7 @@ test_secondmate_no_projects_charter() {
   expect_code 0 "$status" "--no-projects secondmate brief should exit 0"
   brief="$home/data/fdev/brief.md"
   assert_present "$brief" "project-less charter was not scaffolded"
-  assert_grep "# Project clones" "$brief" "project-less charter dropped the Project clones heading"
+  assert_grep "# Project access" "$brief" "project-less charter dropped the Project access heading"
   assert_grep "None. This is a project-less domain" "$brief" \
     "project-less charter did not render a sensible no-clones note"
   assert_grep "its crews take pooled worktrees of that repo" "$brief" \

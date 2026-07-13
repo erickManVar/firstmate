@@ -9,7 +9,8 @@
 # Top-level fields:
 #   schema: stable schema id.
 #   fm_home: resolved operational home.
-#   roots: resolved root/config/data/state/projects directories.
+#   roots: resolved root/config/data/state/projects directories plus
+#     projects_mode=legacy-local|shared-external.
 #   backlog: {path,present,records[]} where records are ordered as written in
 #     data/backlog.md and cover In flight, Queued, and Done.
 #     Canonical tasks-axi rows are structured; free-form non-empty lines in
@@ -45,7 +46,11 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
-PROJECTS="${FM_PROJECTS_OVERRIDE:-$FM_HOME/projects}"
+# shellcheck source=bin/fm-projects-lib.sh
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/fm-projects-lib.sh"
+PROJECTS=$(fm_projects_root) || exit 1
+PROJECTS_MODE=$(fm_projects_mode) || exit 1
 BACKLOG="$DATA/backlog.md"
 
 # shellcheck source=bin/fm-backend.sh
@@ -498,6 +503,7 @@ jq -n \
   --arg data "$DATA" \
   --arg config "$CONFIG" \
   --arg projects "$PROJECTS" \
+  --arg projects_mode "$PROJECTS_MODE" \
   --argjson backlog "$BACKLOG_JSON" \
   --argjson tasks "$TASKS_JSON" \
   --argjson scout_reports "$SCOUT_REPORTS_JSON" \
@@ -508,7 +514,7 @@ jq -n \
    {
      schema:"fm-fleet-snapshot.v1",
      fm_home:$fm_home,
-     roots:{fm_root:$fm_root,state:$state,data:$data,config:$config,projects:$projects},
+     roots:{fm_root:$fm_root,state:$state,data:$data,config:$config,projects:$projects,projects_mode:$projects_mode},
      backlog:$backlog,
      tasks:($tasks | map(. + {backlog:backlog_by_id(.id)})),
      scout_reports:($scout_reports | map(. + {kind:report_kind(.id)})),
