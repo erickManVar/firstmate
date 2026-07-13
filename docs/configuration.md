@@ -146,7 +146,8 @@ The full cmux home label also includes a short hash of the resolved `FM_ROOT` pa
 
 `config/projects-root` is optional, local, gitignored, and contains exactly one non-empty, non-comment absolute path to an existing project-container base.
 Project-base precedence is non-empty `FM_PROJECTS_OVERRIDE`, then `$FM_CONFIG_OVERRIDE/projects-root` or `$FM_HOME/config/projects-root`, then the legacy `$FM_HOME/projects` default.
-An invalid, unreadable, or symlinked config fails closed and never falls back to a mutation-capable legacy directory.
+Either explicit source selects shared-container mode even when it resolves to `$FM_HOME/projects`; only genuine config absence with no override selects legacy-local mode.
+An invalid, unreadable, dangling, symlinked, or unresolvable config fails closed and never falls back to a mutation-capable legacy directory.
 
 When the config or override is present, every project line must use this form:
 

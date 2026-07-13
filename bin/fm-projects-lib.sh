@@ -79,7 +79,7 @@ fm_projects_validate_root_value() {
 # Status 1 means genuine absence only. Invalid, unreadable, or symlinked config
 # is status 2 so callers never fail open to the legacy mutation root.
 fm_projects_configured_root() {
-  local file line count
+  local file line count normalized
   file="$(fm_projects_config_dir)/projects-root"
   if [ ! -e "$file" ] && [ ! -L "$file" ]; then
     return 1
@@ -92,19 +92,26 @@ fm_projects_configured_root() {
     fm_projects_error "$file must be a readable regular file"
     return 2
   fi
-  line=$(awk '
+  if ! line=$(awk '
     /^[[:space:]]*($|#)/ { next }
     { sub(/^[[:space:]]+/, ""); sub(/[[:space:]]+$/, ""); print }
-  ' "$file") || {
-    fm_projects_error "cannot read $file"
+  ' "$file"); then
+    fm_projects_error "failed to read configured projects root: $file"
     return 2
-  }
-  count=$(printf '%s\n' "$line" | awk 'NF { n++ } END { print n+0 }') || return 2
+  fi
+  if ! count=$(printf '%s\n' "$line" | awk 'NF { n++ } END { print n+0 }'); then
+    fm_projects_error "failed to parse configured projects root: $file"
+    return 2
+  fi
   if [ "$count" -ne 1 ]; then
     fm_projects_error "$file must contain exactly one non-empty, non-comment path"
     return 2
   fi
-  fm_projects_validate_root_value "$line" "$file"
+  if ! normalized=$(fm_projects_validate_root_value "$line" "$file") || [ -z "$normalized" ]; then
+    fm_projects_error "failed to normalize configured projects root: $line"
+    return 2
+  fi
+  printf '%s\n' "$normalized"
 }
 
 fm_projects_root_source() {
