@@ -58,6 +58,10 @@ registry_home_for_line() {
   sed -n 's/^[^(]*(home: \([^;)]*\);.*/\1/p'
 }
 
+registry_projects_for_line() {
+  sed -n 's/.*; projects: \([^;)]*\); added .*/\1/p'
+}
+
 normalize_registry_text() {
   awk '
     {
@@ -389,7 +393,7 @@ existing_ancestor_for_path() {
 }
 
 shared_home_is_registered_marker_match() {
-  local id=$1 home=$2 marker_id target line registered_id registered_home
+  local id=$1 home=$2 marker_id target line registered_id registered_home projects project expected_home old_ifs
   [ -f "$home/$SUB_HOME_MARKER" ] || return 1
   marker_id=$(cat "$home/$SUB_HOME_MARKER" 2>/dev/null || true)
   [ "$marker_id" = "$id" ] || return 1
@@ -403,8 +407,23 @@ shared_home_is_registered_marker_match() {
         [ "$registered_id" = "$id" ] || continue
         registered_home=$(printf '%s\n' "$line" | registry_home_for_line)
         [ -n "$registered_home" ] || return 1
-        [ "$(resolved_path "$registered_home")" = "$target" ]
-        return
+        [ "$(resolved_path "$registered_home")" = "$target" ] || return 1
+        projects=$(printf '%s\n' "$line" | registry_projects_for_line)
+        [ -n "$projects" ] || return 1
+        old_ifs=$IFS
+        IFS=,
+        for project in $projects; do
+          project=$(printf '%s' "$project" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+          [ -n "$project" ] || continue
+          fm_project_is_registered "$project" || continue
+          expected_home="$(fm_project_container_path "$project")/.secondmate"
+          [ "$(resolved_path "$expected_home")" = "$target" ] && {
+            IFS=$old_ifs
+            return 0
+          }
+        done
+        IFS=$old_ifs
+        return 1
         ;;
     esac
   done < "$REG"

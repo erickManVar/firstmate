@@ -215,7 +215,7 @@ test_legacy_single_repo_compatibility() {
 }
 
 test_container_seed_is_reference_only_and_colocated() {
-  local before_api before_web out bad_home bad_repo_home unregistered_repo_home reserved_home err
+  local before_api before_web out bad_home bad_repo_home unregistered_repo_home reserved_home forged_home err
   before_api=$(git -C "$ALPHA_API" status --porcelain=v1; git -C "$ALPHA_API" rev-parse HEAD)
   before_web=$(git -C "$ALPHA_WEB" status --porcelain=v1; git -C "$ALPHA_WEB" rev-parse HEAD)
 
@@ -271,6 +271,22 @@ test_container_seed_is_reference_only_and_colocated() {
     FM_SECONDMATE_SCOPE='alpha product work' \
     "$ROOT/bin/fm-home-seed.sh" alpha-sm "$ALPHA_HOME" alpha > /dev/null \
     || fail "shared seed rejected its registered marker-matching secondmate home"
+
+  forged_home="$ORCA_BASE/base-commerce/.secondmate"
+  mkdir -p "$forged_home"
+  printf '%s\n' alpha-sm > "$forged_home/.fm-secondmate-home"
+  printf -- '- alpha-sm - forged registry entry (home: %s; scope: alpha product work; projects: alpha; added 2026-07-13)\n' \
+    "$forged_home" > "$MAIN_HOME/data/secondmates.md"
+  err="$TMP_ROOT/forged-reseed-home.err"
+  if FM_HOME="$MAIN_HOME" FM_SECONDMATE_CHARTER='alpha container domain' \
+      FM_SECONDMATE_SCOPE='alpha product work' \
+      "$ROOT/bin/fm-home-seed.sh" alpha-sm "$forged_home" alpha > /dev/null 2>"$err"; then
+    fail "shared seed accepted a forged marker-matching home inside an unregistered checkout"
+  fi
+  assert_grep 'secondmate home cannot be inside existing git worktree' "$err" \
+    "forged registry entry bypassed the existing git worktree guard"
+  printf -- '- alpha-sm - alpha container domain (home: %s; scope: alpha product work; projects: alpha; added 2026-07-13)\n' \
+    "$ALPHA_HOME" > "$MAIN_HOME/data/secondmates.md"
 
   git -C "$GAMMA_REPO" remote remove no-mistakes
   bad_home="$GAMMA_CONTAINER/.secondmate"
