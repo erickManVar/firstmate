@@ -10,6 +10,7 @@
 #                 "CREW_DISPATCH: invalid config/crew-dispatch.json - <reason>",
 #                 "CREW_DISPATCH: active config/crew-dispatch.json" plus indented rules,
 #                 "FLEET_SYNC: <repo>: skipped|recovered|STUCK: <detail>",
+#                 "FLEET_SYNC: <fleet-sync failure detail>",
 #                 "TASKS_AXI: available", "TANGLE: <remediation>",
 #                 "SECONDMATE_SYNC: secondmate <id>: skipped: <reason>",
 #                 "NUDGE_SECONDMATES: fm-<id>...",
@@ -160,16 +161,29 @@ fleet_sync_relay_all_output() {
   done < "$tmp"
 }
 
+fleet_sync_relay_error_output() {
+  local tmp=$1 line
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    echo "FLEET_SYNC: $line"
+  done < "$tmp"
+}
+
 fleet_sync() {
+  local err pid start elapsed sync_status timeout tmp
   [ -x "$FM_ROOT/bin/fm-fleet-sync.sh" ] || return 0
   [ -d "$PROJECTS" ] || return 0
 
   tmp=$(mktemp "${TMPDIR:-/tmp}/fm-fleet-sync.XXXXXX" 2>/dev/null) || return 0
+  err=$(mktemp "${TMPDIR:-/tmp}/fm-fleet-sync-stderr.XXXXXX" 2>/dev/null) || {
+    rm -f "$tmp"
+    return 0
+  }
   timeout=$(fleet_sync_bootstrap_timeout)
   monitor_was_on=0
   case $- in *m*) monitor_was_on=1 ;; esac
   set -m 2>/dev/null || true
-  "$FM_ROOT/bin/fm-fleet-sync.sh" >"$tmp" 2>/dev/null &
+  "$FM_ROOT/bin/fm-fleet-sync.sh" >"$tmp" 2>"$err" &
   pid=$!
 
   start=$SECONDS
@@ -181,16 +195,20 @@ fleet_sync() {
       [ "$monitor_was_on" -eq 1 ] || set +m 2>/dev/null || true
       fleet_sync_relay_all_output "$tmp"
       echo "FLEET_SYNC: fleet: skipped: bootstrap refresh timed out (timeout=${timeout}s elapsed=${elapsed}s)"
-      rm -f "$tmp"
+      rm -f "$tmp" "$err"
       return 0
     fi
     sleep 1
   done
-  wait "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null
+  sync_status=$?
   [ "$monitor_was_on" -eq 1 ] || set +m 2>/dev/null || true
 
   fleet_sync_relay_filtered_output "$tmp"
-  rm -f "$tmp"
+  if [ "$sync_status" -ne 0 ]; then
+    fleet_sync_relay_error_output "$err"
+  fi
+  rm -f "$tmp" "$err"
 }
 
 secondmate_sync() {

@@ -154,6 +154,7 @@ It contains exactly `primary` for the one home allowed to synchronize canonical 
 Missing, unreadable, malformed, or unknown values refuse shared fleet synchronization rather than inferring a primary role from `.fm-secondmate-home`.
 `fm-home-seed.sh` writes `secondmate` transactionally for every seeded secondmate home.
 Before enabling `config/projects-root` on an existing primary home, deliberately create `config/home-role` with `printf 'primary\n' > config/home-role`; verify its owner and path first, and never copy that file into a secondmate home.
+Session-start bootstrap relays role authorization failures as `FLEET_SYNC:` diagnostics with a prompt to set `config/home-role` to exactly `primary` or `secondmate`, while continuing its other best-effort checks.
 
 When the config or override is present, every project line must use this form:
 

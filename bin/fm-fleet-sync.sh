@@ -63,7 +63,10 @@ fi
 [ $# -le 1 ] || { usage; exit 1; }
 
 if [ "$(fm_projects_mode)" = shared-external ]; then
-  HOME_ROLE=$(fm_projects_home_role) || exit 1
+  if ! HOME_ROLE=$(fm_projects_home_role); then
+    echo "fleet: error: shared synchronization authorization failed; set $(fm_projects_config_dir)/home-role to exactly primary, or exactly secondmate for a seeded secondmate home" >&2
+    exit 1
+  fi
   if [ "$HOME_ROLE" = secondmate ]; then
     echo "fleet: skipped: shared project synchronization delegated to primary firstmate"
     exit 0
