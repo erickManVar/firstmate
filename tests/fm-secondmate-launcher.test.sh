@@ -204,6 +204,22 @@ test_live_agent_attaches_without_duplicate() {
   pass "second run attaches to the live coordinator instead of duplicating"
 }
 
+test_version_named_live_agent_attaches() {
+  # The exact Base Commerce acceptance defect (2026-07-14): a live, idle Claude
+  # 2.1.208 coordinator whose pane reports pane_current_command=2.1.208 (its
+  # version, not "claude") was misclassified unknown, so a second launch refused
+  # to attach. It must now prove the live process and reuse it, never duplicate.
+  reset_state
+  "$LAUNCHER" claude --no-attach >/dev/null 2>&1 || fail "seed spawn failed"
+  : > "$FM_FAKE_SPAWN_LOG"
+  export FM_FAKE_TMUX_TARGET_EXISTS=1 FM_FAKE_TMUX_CURRENT_COMMAND=2.1.208
+  out=$("$LAUNCHER" claude --no-attach 2>&1) || fail "version-named live attach failed: $out"
+  assert_contains "$out" "target firstmate:fm-alpha-sm" "attach reports the live target"
+  assert_no_grep "spawn:" "$FM_FAKE_SPAWN_LOG" "version-named live agent must never be duplicated"
+  assert_no_grep "kill-window" "$FM_FAKE_TMUX_LOG" "a version-named live agent must not be killed"
+  pass "a version-named live coordinator (2.1.208) is proven live and attached, not duplicated"
+}
+
 test_dead_endpoint_is_killed_and_respawned() {
   reset_state
   "$LAUNCHER" codex --no-attach >/dev/null 2>&1 || fail "seed spawn failed"
@@ -313,6 +329,7 @@ test_fresh_start_spawns_with_explicit_harness
 test_auto_omits_harness_and_backend_forwards
 test_explicit_project_arg_is_routed
 test_live_agent_attaches_without_duplicate
+test_version_named_live_agent_attaches
 test_dead_endpoint_is_killed_and_respawned
 test_unproven_liveness_fails_closed
 test_meta_home_disagreement_fails_closed

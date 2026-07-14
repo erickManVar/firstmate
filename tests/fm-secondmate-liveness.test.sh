@@ -111,7 +111,26 @@ test_tmux_agent_alive_classifies() {
   [ "$(PATH="$fb:$BASE_PATH" bash -c '. "$0/bin/fm-backend.sh"; fm_backend_source tmux; fm_backend_tmux_agent_alive sess:win' "$ROOT")" = unknown ] \
     || fail "an unrecognized foreground process should classify as unknown"
 
-  pass "fm_backend_tmux_agent_alive: alive/dead/unknown classification"
+  # Observed live 2026-07-14 (Base Commerce acceptance): Claude 2.1.208 renames
+  # its own foreground process to its version string, so the pane reports the
+  # version, not "claude". A bare dotted-numeric version token must classify as
+  # alive so a second launch reuses the live coordinator instead of refusing
+  # (docs/tmux-backend.md "Version-named foreground process").
+  fb=$(make_probe_tmux "$TMP_ROOT/tmux-ver" 2.1.208)
+  [ "$(PATH="$fb:$BASE_PATH" bash -c '. "$0/bin/fm-backend.sh"; fm_backend_source tmux; fm_backend_tmux_agent_alive sess:win' "$ROOT")" = alive ] \
+    || fail "a version-named foreground process (2.1.208) should classify as alive"
+
+  fb=$(make_probe_tmux "$TMP_ROOT/tmux-ver2" 0.45.0)
+  [ "$(PATH="$fb:$BASE_PATH" bash -c '. "$0/bin/fm-backend.sh"; fm_backend_source tmux; fm_backend_tmux_agent_alive sess:win' "$ROOT")" = alive ] \
+    || fail "another version-named foreground process (0.45.0, e.g. a version-renamed codex) should classify as alive"
+
+  # Guard the boundary: an interpreter-with-version name is NOT a bare version
+  # token (leading letter), so it must stay unknown, never a false alive.
+  fb=$(make_probe_tmux "$TMP_ROOT/tmux-py311" python3.11)
+  [ "$(PATH="$fb:$BASE_PATH" bash -c '. "$0/bin/fm-backend.sh"; fm_backend_source tmux; fm_backend_tmux_agent_alive sess:win' "$ROOT")" = unknown ] \
+    || fail "an interpreter-with-version name (python3.11) must stay unknown, not a false alive"
+
+  pass "fm_backend_tmux_agent_alive: alive/dead/unknown classification incl. version-named process"
 }
 
 # --- unit level: fm_backend_herdr_agent_alive -------------------------------
