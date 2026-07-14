@@ -12,8 +12,12 @@
 #
 # A linked-worktree secondmate home already holds the primary's commit in the
 # shared object store, so its local-HEAD sync is a purely local fast-forward that
-# never touches the network. A standalone clone moves through that path only when
-# it already has the target; otherwise it is skipped until the origin path updates it.
+# never touches the network. A standalone clone may lack the target - the primary
+# can carry a local-only commit that never reached the clone's network origin - so
+# the local-HEAD path acquires the missing commit ONLY from the trusted local
+# primary repository (FM_ROOT) over the filesystem, never from origin or any
+# network remote, then applies the same ff-only guards. If even that cannot supply
+# it, the target is skipped.
 # A tracked-files fast-forward never touches the gitignored operational dirs
 # (data/, state/, config/, projects/, .no-mistakes/), so it cannot disturb a
 # secondmate's backlog, projects, or in-flight work.
@@ -189,8 +193,9 @@ validate_secondmate_home() {
 }
 
 # A single fetch refreshes every worktree that shares an object store, so fetch
-# each distinct git-common-dir at most once. Used ONLY by the origin base mode;
-# the local-HEAD sync never fetches.
+# each distinct git-common-dir at most once. Used ONLY by the origin base mode -
+# this is the network origin fetch. The local-HEAD sync never touches the network;
+# it fetches at most from the local primary via acquire_primary_commit below.
 FETCHED=""
 fetch_once() {
   local dir=$1 common
@@ -205,6 +210,25 @@ fetch_once() {
     return 0
   fi
   return 1
+}
+
+# Local-HEAD sync only: bring the primary's commit into <dir>'s object store when
+# the target lacks it. A standalone-clone secondmate home can be missing a primary
+# commit made locally and never pushed to the clone's network origin (a linked
+# worktree always shares it). Acquire that commit ONLY from the trusted local
+# primary repository (FM_ROOT) over the filesystem - never from origin or any
+# network remote - by fetching the primary's default branch, whose tip IS the
+# local-HEAD sync base. This never forces, resets, stashes, or moves any ref in
+# <dir>; it only populates the object store, and the ff-only guards in ff_target
+# still decide whether the fast-forward actually happens. Returns 0 only if the
+# base commit is present in <dir> afterward.
+acquire_primary_commit() {
+  local dir=$1 base=$2 primary=${FM_ROOT:-} primary_default
+  [ -n "$primary" ] || return 1
+  git -C "$primary" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 1
+  primary_default=$(default_branch "$primary") || return 1
+  git -C "$dir" fetch --no-tags --quiet "$primary" "refs/heads/$primary_default" 2>/dev/null || return 1
+  git -C "$dir" rev-parse --verify --quiet "$base^{commit}" >/dev/null 2>&1
 }
 
 # Which watched instruction paths changed between HEAD and BASE (comma list).
@@ -273,11 +297,12 @@ live_secondmate_meta_records() {
 # base_mode selects where the fast-forward base comes from:
 #   origin       - fetch origin and advance to origin/<default> (the /updatefirstmate
 #                  path); requires an origin remote and network reachability.
-#   <commit-ish> - advance to that LOCAL commit with NO fetch and no origin
-#                  dependency (the local-HEAD secondmate sync). The commit must
-#                  already exist in the target's object store, which it always does
-#                  for a worktree of this same repo; a standalone clone that lacks
-#                  it is skipped rather than fetched.
+#   <commit-ish> - advance to that LOCAL commit with no origin/network dependency
+#                  (the local-HEAD secondmate sync). A worktree of this same repo
+#                  always holds the commit; a standalone clone that lacks it has
+#                  the commit acquired from the trusted local primary repository
+#                  (FM_ROOT) over the filesystem via acquire_primary_commit, and
+#                  is skipped only if even that cannot supply it.
 # Guards are identical in both modes: ff-only (never force/merge/stash); skip a
 # dirty, diverged, or wrong-branch target and leave its work untouched.
 FF_STATUS=""
@@ -318,8 +343,15 @@ ff_target() {
   fi
 
   if ! git -C "$dir" rev-parse --verify --quiet "$base^{commit}" >/dev/null; then
-    echo "$label: skipped: $base does not exist"
-    return 0
+    # Local-HEAD sync: a standalone-clone home may not hold the primary's
+    # local-only commit yet (a linked worktree always shares it). Acquire it from
+    # the trusted local primary repository (FM_ROOT) over the filesystem, never
+    # from the network; skip only if it still cannot be obtained. The origin base
+    # mode never takes this path - a missing origin/<default> there is a real skip.
+    if [ "$base_mode" = origin ] || ! acquire_primary_commit "$dir" "$base"; then
+      echo "$label: skipped: $base does not exist"
+      return 0
+    fi
   fi
 
   cur=$(git -C "$dir" symbolic-ref --short HEAD 2>/dev/null || echo "")

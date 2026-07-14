@@ -211,10 +211,11 @@ fleet_sync() {
 
 secondmate_sync() {
   # Local-HEAD secondmate sync: fast-forward every LIVE secondmate home
-  # to the primary checkout's current default-branch commit. Purely LOCAL - no
-  # fetch, no origin dependency: a linked-worktree home already holds the primary's
-  # commit (fm-ff-lib.sh), while a standalone clone without it is skipped until
-  # /updatefirstmate refreshes it from origin. Emits NUDGE_SECONDMATES:
+  # to the primary checkout's current default-branch commit. No network/origin
+  # dependency: a linked-worktree home already holds the primary's commit, while a
+  # standalone clone missing it has the commit acquired from the trusted local
+  # primary repository over the filesystem (fm-ff-lib.sh), then the same ff-only
+  # guards apply. Emits NUDGE_SECONDMATES:
   # only for RUNNING secondmates whose instruction surface (AGENTS.md, bin/, or
   # .agents/skills/) actually changed, so a secondmate already on the primary's
   # version is never disturbed (AGENTS.md bootstrap + supervision). Mirrors
