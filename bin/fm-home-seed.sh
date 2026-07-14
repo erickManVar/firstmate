@@ -1124,7 +1124,7 @@ seed_home() {
       return 1
     }
   if [ "$PROJECTS_MODE" = shared-external ]; then
-    inherited_projects=$(FM_HOME="$home" FM_CONFIG_OVERRIDE= FM_PROJECTS_OVERRIDE= fm_projects_root) || {
+    inherited_projects=$(FM_HOME="$home" FM_CONFIG_OVERRIDE='' FM_PROJECTS_OVERRIDE='' fm_projects_root) || {
       echo "error: secondmate home $home cannot resolve its inherited projects-root" >&2
       return 1
     }

@@ -102,7 +102,6 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 SUB_HOME_MARKER=".fm-secondmate-home"
 # shellcheck source=bin/fm-projects-lib.sh
 . "$SCRIPT_DIR/fm-projects-lib.sh"
-PROJECTS=$(fm_projects_root) || exit 1
 # shellcheck source=bin/fm-ff-lib.sh
 . "$SCRIPT_DIR/fm-ff-lib.sh"
 # shellcheck source=bin/fm-config-inherit-lib.sh

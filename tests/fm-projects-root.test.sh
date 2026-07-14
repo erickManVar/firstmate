@@ -14,6 +14,8 @@ fm_git_identity
 resolver_call() {
   local home=$1 expression=$2
   shift 2
+  # The child bash intentionally expands its positional parameters after loading the library.
+  # shellcheck disable=SC2016
   env FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" "$@" bash -c \
     '. "$1/bin/fm-projects-lib.sh"; eval "$2"' bash "$ROOT" "$expression"
 }
