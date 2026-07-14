@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Ergonomic alias for bin/fm-primary-entry.sh, the captain's primary firstmate
+# entry command. This bin/ directory is already on PATH wherever `secondmate`
+# resolves, so `firstmate claude` and `firstmate codex` work from any
+# directory; all arguments pass through unchanged.
+set -eu
+exec "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-primary-entry.sh" "$@"
