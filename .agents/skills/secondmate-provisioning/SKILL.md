@@ -59,7 +59,7 @@ The slot stays reserved across restarts until the lease is released.
 Release happens only on explicit retirement or seed rollback, never on routine restart or recovery.
 
 `bin/fm-home-seed.sh` copies the charter into the secondmate home as `data/charter.md`.
-It also writes the required `.fm-secondmate-home` identity marker, which is gitignored and must remain in place for home validation.
+It also writes the required `.fm-secondmate-home` identity marker and `config/home-role` containing exactly `secondmate`, both gitignored and required for home validation and shared-sync isolation.
 `bin/fm-spawn.sh --secondmate` launches it through the secondmate harness path, resolving `config/secondmate-harness` -> `config/crew-harness` -> the primary's own harness unless an explicit per-spawn harness override is passed.
 
 Project access has two backward-compatible seed modes, selected by `bin/fm-projects-lib.sh`.
@@ -69,7 +69,8 @@ Each selected project line explicitly names one or more sibling repos in its sam
 The exact registry and reserved-path contract is owned by `docs/configuration.md` ("Project containers").
 An explicit seed home may be the container's real `.secondmate/` sibling directory; `ensure_home` clones the firstmate checkout there and normal home validation keeps it isolated from every canonical repo.
 Shared mode keeps the internal `projects/` directory real and empty, never replaces it with a symlink, and never clones, initializes, fleet-syncs, deletes, or records rollback ownership over any registered repo.
-The primary firstmate owns safe fleet-sync mutation of shared container repos; a marked secondmate may resolve them and spawn isolated task worktrees but delegates canonical sync to the primary.
+The primary firstmate home must deliberately set `config/home-role` to exactly `primary` before shared mode is enabled; it owns safe fleet-sync mutation of shared container repos.
+A `secondmate` role may resolve those repos and spawn isolated task worktrees but delegates canonical sync to the primary.
 `FM_PROJECTS_OVERRIDE` remains the highest-precedence one-shot project-base input, but shared seeding requires the durable `config/projects-root` file because environment overrides are cleared on secondmate launch.
 
 `config/secondmate-harness` may also pin a concrete model and effort for the secondmate agent, in the SAME file rather than a new one: the format is a single whitespace-separated line `<harness> [<model>] [<effort>]`, with only the first non-empty, non-comment line parsed.

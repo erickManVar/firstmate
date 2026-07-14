@@ -834,6 +834,7 @@ seed_rollback() {
       fi
       if [ -n "${SEED_BACKUP_DIR:-}" ] && [ "${SEED_HOME_BACKED_UP:-0}" = 1 ]; then
         restore_seed_file "$SEED_MARKER_EXISTED" "$SEED_BACKUP_DIR/marker" "$SEED_HOME/$SUB_HOME_MARKER"
+        restore_seed_file "$SEED_HOME_ROLE_EXISTED" "$SEED_BACKUP_DIR/home-role" "$SEED_HOME/config/home-role"
         restore_seed_file "$SEED_CHARTER_EXISTED" "$SEED_BACKUP_DIR/charter.md" "$SEED_HOME/data/charter.md"
         restore_seed_file "$SEED_SUB_REG_EXISTED" "$SEED_BACKUP_DIR/sub-projects.md" "$SEED_HOME/data/projects.md"
         restore_seed_file "$SEED_PROJECTS_ROOT_EXISTED" "$SEED_BACKUP_DIR/projects-root" "$SEED_HOME/config/projects-root"
@@ -1011,6 +1012,12 @@ seed_home() {
   fi
 
   validate_registry
+  if [ "$PROJECTS_MODE" = shared-external ]; then
+    [ "$(fm_projects_home_role)" = primary ] || {
+      echo "error: shared secondmate seeding requires the active home role to be primary" >&2
+      return 1
+    }
+  fi
   for project in "$@"; do
     validate_seed_project "$project"
   done
@@ -1038,6 +1045,7 @@ seed_home() {
   SEED_SUB_REG_EXISTED=0
   SEED_CHARTER_EXISTED=0
   SEED_MARKER_EXISTED=0
+  SEED_HOME_ROLE_EXISTED=0
   SEED_PROJECTS_ROOT_EXISTED=0
   trap seed_rollback EXIT
   if [ -f "$REG" ]; then
@@ -1079,6 +1087,18 @@ seed_home() {
   if [ -f "$home/$SUB_HOME_MARKER" ]; then
     SEED_MARKER_EXISTED=1
     cp "$home/$SUB_HOME_MARKER" "$SEED_BACKUP_DIR/marker"
+  fi
+  if [ -L "$home/config/home-role" ]; then
+    echo "error: secondmate home role config must not be a symlink: $home/config/home-role" >&2
+    return 1
+  fi
+  if [ -e "$home/config/home-role" ] && [ ! -f "$home/config/home-role" ]; then
+    echo "error: secondmate home role config must be a regular file: $home/config/home-role" >&2
+    return 1
+  fi
+  if [ -f "$home/config/home-role" ]; then
+    SEED_HOME_ROLE_EXISTED=1
+    cp "$home/config/home-role" "$SEED_BACKUP_DIR/home-role"
   fi
   if [ -L "$home/config/projects-root" ]; then
     echo "error: secondmate projects-root config must not be a symlink: $home/config/projects-root" >&2
@@ -1166,6 +1186,7 @@ seed_home() {
   cp "$SEED_PARENT_BRIEF" "$home/data/charter.md"
 
   projects_csv=$(join_projects "$@")
+  printf '%s\n' secondmate > "$home/config/home-role"
   printf '%s\n' "$id" > "$home/$SUB_HOME_MARKER"
   write_registry "$id" "$home" "$projects_csv" "$SEED_PARENT_BRIEF"
   validate_registry

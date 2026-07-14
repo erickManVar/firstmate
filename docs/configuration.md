@@ -149,6 +149,12 @@ Project-base precedence is non-empty `FM_PROJECTS_OVERRIDE`, then `$FM_CONFIG_OV
 Either explicit source selects shared-container mode even when it resolves to `$FM_HOME/projects`; only genuine config absence with no override selects legacy-local mode.
 An invalid, unreadable, dangling, symlinked, or unresolvable config fails closed and never falls back to a mutation-capable legacy directory.
 
+Shared-container homes also require the local, gitignored `config/home-role` file.
+It contains exactly `primary` for the one home allowed to synchronize canonical repos, or exactly `secondmate` for a delegated home.
+Missing, unreadable, malformed, or unknown values refuse shared fleet synchronization rather than inferring a primary role from `.fm-secondmate-home`.
+`fm-home-seed.sh` writes `secondmate` transactionally for every seeded secondmate home.
+Before enabling `config/projects-root` on an existing primary home, deliberately create `config/home-role` with `printf 'primary\n' > config/home-role`; verify its owner and path first, and never copy that file into a secondmate home.
+
 When the config or override is present, every project line must use this form:
 
 ```markdown
@@ -173,7 +179,7 @@ That line resolves only `/Users/erickmanrique/orca/ayjestudios/frontend`, `/User
 `/Users/erickmanrique/orca/base-commerce` was observed on 2026-07-13 as a direct Git checkout, not a non-git container; this support change treats it only as a read-only migration example and does not move or rewrite it.
 
 Secondmate homes inherit `projects-root`, copy only their selected registry lines, retain a real empty internal `projects/` directory, and may live at `<container>/.secondmate` beside the registered repos.
-The primary firstmate owns fleet-sync mutation of container repos; a marked secondmate delegates shared synchronization and changes repos only through isolated task worktrees.
+The primary firstmate role owns fleet-sync mutation of container repos; a `secondmate` role delegates shared synchronization and changes repos only through isolated task worktrees.
 From an Orca window opened at a registered container, repo, or repo subdirectory, `bin/fm-project-route.sh` maps the physical path back through `data/projects.md` and then reports the matching `data/secondmates.md` route and supported `fm-send` command.
 The helper refuses unregistered paths and ambiguous non-exclusive secondmate routes instead of guessing.
 

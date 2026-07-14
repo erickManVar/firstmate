@@ -126,6 +126,7 @@ setup_container_world() {
 - gamma [no-mistakes] - gamma product (repos: service; added 2026-07-13)
 EOF
   printf '%s\n' "$ORCA_BASE" > "$MAIN_HOME/config/projects-root"
+  printf '%s\n' primary > "$MAIN_HOME/config/home-role"
 }
 
 test_registry_drives_containers_and_repo_selection() {
@@ -256,6 +257,7 @@ test_container_seed_is_reference_only_and_colocated() {
     || fail "colocated container secondmate seed failed"
   assert_contains "$out" "home=$ALPHA_HOME" "seed did not report the colocated home"
   assert_present "$ALPHA_HOME/.fm-secondmate-home" "seed did not mark the secondmate home"
+  assert_grep secondmate "$ALPHA_HOME/config/home-role" "seed did not write the secondmate home role"
   [ ! -L "$ALPHA_HOME" ] || fail "colocated secondmate home is a symlink"
   assert_present "$ALPHA_HOME/projects" "seed did not retain the internal legacy projects directory"
   [ -z "$(find "$ALPHA_HOME/projects" -mindepth 1 -maxdepth 1 -print)" ] \
@@ -323,6 +325,10 @@ test_registry_sync_and_route_from_container_context() {
   out=$(FM_HOME="$ALPHA_HOME" FM_FLEET_PRUNE=0 "$ROOT/bin/fm-fleet-sync.sh" 2>/dev/null)
   assert_contains "$out" 'shared project synchronization delegated to primary firstmate' \
     "container secondmate did not delegate canonical repo sync"
+  rm "$ALPHA_HOME/.fm-secondmate-home"
+  out=$(FM_HOME="$ALPHA_HOME" FM_FLEET_PRUNE=0 "$ROOT/bin/fm-fleet-sync.sh" 2>/dev/null)
+  assert_contains "$out" 'shared project synchronization delegated to primary firstmate' \
+    "missing secondmate marker reopened shared canonical synchronization"
 
   out=$(cd "$ALPHA_CONTAINER" && FM_HOME="$MAIN_HOME" "$ROOT/bin/fm-project-route.sh") \
     || fail "route lookup from non-git project container failed"
@@ -369,9 +375,43 @@ test_registry_sync_and_route_from_container_context() {
   pass "sync and routing follow the registry from container or repo context"
 }
 
+test_shared_sync_requires_explicit_home_role() {
+  local out err rc
+  rm "$MAIN_HOME/config/home-role"
+  err="$TMP_ROOT/missing-primary-role.err"
+  set +e
+  FM_HOME="$MAIN_HOME" FM_FLEET_PRUNE=0 "$ROOT/bin/fm-fleet-sync.sh" > /dev/null 2>"$err"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "shared sync accepted a missing primary home role"
+  assert_grep 'home-role containing exactly primary or secondmate' "$err" \
+    "missing primary home role did not fail closed"
+
+  printf 'primary\n\n' > "$MAIN_HOME/config/home-role"
+  if FM_HOME="$MAIN_HOME" FM_FLEET_PRUNE=0 "$ROOT/bin/fm-fleet-sync.sh" > /dev/null 2>"$err"; then
+    fail "shared sync accepted a malformed home role"
+  fi
+  assert_grep 'must contain exactly primary or secondmate' "$err" \
+    "malformed home role did not fail closed"
+
+  printf '%s\n' unknown > "$MAIN_HOME/config/home-role"
+  if FM_HOME="$MAIN_HOME" FM_FLEET_PRUNE=0 "$ROOT/bin/fm-fleet-sync.sh" > /dev/null 2>"$err"; then
+    fail "shared sync accepted an unknown home role"
+  fi
+  assert_grep 'must contain exactly primary or secondmate' "$err" \
+    "unknown home role did not fail closed"
+
+  printf '%s\n' secondmate > "$MAIN_HOME/config/home-role"
+  out=$(FM_HOME="$MAIN_HOME" FM_FLEET_PRUNE=0 "$ROOT/bin/fm-fleet-sync.sh" 2>/dev/null)
+  assert_contains "$out" 'shared project synchronization delegated to primary firstmate' \
+    "secondmate role did not delegate shared synchronization"
+  pass "shared synchronization requires an explicit fail-closed home role"
+}
+
 test_resolver_precedence_and_fail_closed_config
 test_registry_drives_containers_and_repo_selection
 test_legacy_single_repo_compatibility
 test_container_seed_is_reference_only_and_colocated
 test_legacy_seed_keeps_existing_home_placement_behavior
 test_registry_sync_and_route_from_container_context
+test_shared_sync_requires_explicit_home_role

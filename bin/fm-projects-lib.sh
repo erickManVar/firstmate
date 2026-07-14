@@ -547,7 +547,35 @@ EOF
   esac
 }
 
+fm_projects_home_role() {
+  local file role lines
+  file="$(fm_projects_config_dir)/home-role"
+  if [ ! -e "$file" ] && [ ! -L "$file" ]; then
+    fm_projects_error "shared project synchronization requires $file containing exactly primary or secondmate"
+    return 1
+  fi
+  if [ -L "$file" ] || [ ! -f "$file" ] || [ ! -r "$file" ]; then
+    fm_projects_error "$file must be a readable regular file containing exactly primary or secondmate"
+    return 1
+  fi
+  role=$(cat "$file" 2>/dev/null) || {
+    fm_projects_error "cannot read shared home role: $file"
+    return 1
+  }
+  lines=$(grep -c '^' "$file" 2>/dev/null) || {
+    fm_projects_error "cannot validate shared home role: $file"
+    return 1
+  }
+  case "$role:$lines" in
+    primary:1|secondmate:1) printf '%s\n' "$role" ;;
+    *)
+      fm_projects_error "$file must contain exactly primary or secondmate"
+      return 1
+      ;;
+  esac
+}
+
 fm_projects_mutation_allowed() {
   [ "$(fm_projects_mode)" = legacy-local ] && return 0
-  [ ! -f "$(fm_projects_home)/.fm-secondmate-home" ]
+  [ "$(fm_projects_home_role)" = primary ]
 }

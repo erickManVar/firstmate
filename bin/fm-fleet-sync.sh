@@ -62,9 +62,12 @@ if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
 fi
 [ $# -le 1 ] || { usage; exit 1; }
 
-if ! fm_projects_mutation_allowed; then
-  echo "fleet: skipped: shared project synchronization delegated to primary firstmate"
-  exit 0
+if [ "$(fm_projects_mode)" = shared-external ]; then
+  HOME_ROLE=$(fm_projects_home_role) || exit 1
+  if [ "$HOME_ROLE" = secondmate ]; then
+    echo "fleet: skipped: shared project synchronization delegated to primary firstmate"
+    exit 0
+  fi
 fi
 
 project_label() {
