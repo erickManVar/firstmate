@@ -7,7 +7,7 @@ Firstmate agents operating this backend should load the agent-only [`firstmate-o
 ## Setup
 
 Pick Orca if you already run the Orca macOS app as your terminal environment and want firstmate tasks to live in Orca-managed worktrees and terminals instead of a treehouse/tmux pair.
-Orca is macOS-only, explicit-only (never auto-detected), and has no secondmate support.
+Orca is macOS-only and explicit-only (never auto-detected).
 
 Prerequisites:
 
@@ -31,7 +31,7 @@ You do not need to open the app for routine supervision: from an active firstmat
 
 Verify it works by spawning a trivial task with `--backend orca` and confirming the task's meta records `backend=orca`, `terminal=`, `orca_worktree_id=`, and `worktree=`; the Orca app should show a new terminal for the task.
 
-Limitations: `--secondmate` spawns refuse `backend=orca` (secondmate-home semantics need a separate design), Escape is unsupported, Orca is macOS-only and explicit-only, and it exposes no stable CLI version marker, so spawn gates on runtime reachability instead of a version floor - see "Limitations" below for the complete list.
+Limitations: Escape is unsupported, Orca is macOS-only and explicit-only, and it exposes no stable CLI version marker, so spawn gates on runtime reachability instead of a version floor - see "Limitations" below for the complete list.
 
 ## Status
 
@@ -95,10 +95,26 @@ Teardown:
 - After the existing firstmate safety checks pass, teardown closes the recorded Orca terminal and releases the recorded worktree through `orca worktree rm --worktree id:<orca_worktree_id> --force`.
 - Teardown does not raw-delete Orca worktrees.
 
+## Secondmate hosting
+
+A `--secondmate` spawn on `backend=orca` hosts the persistent coordinator natively: the already-provisioned secondmate home (for a project container, its `.secondmate/` worktree) IS the Orca worktree.
+`fm_backend_orca_worktree_adopt` registers the home as an Orca repo when needed (`orca repo add --path`, making the home the repo's main worktree), resolves it with `orca worktree show --worktree path:<home>`, and fails closed when Orca resolves the selector to any other physical path; it never runs `orca worktree create` or `orca worktree rm`, so no duplicate repository, branch, or task worktree ever appears.
+One coordinator terminal per home, titled `fm-<id>`: `fm_backend_orca_terminal_find` reuses an exact-title match, and spawn clears it only on a confidently dead reading, refuses a live or liveness-unproven one, fails closed on duplicates, and re-checks after creating its own terminal so a concurrent duplicate launch also fails closed.
+Meta records the same fields as ship/scout Orca tasks plus the secondmate `home=`/`projects=` fields, so `fm-peek.sh`, `fm-send.sh`, `fm-crew-state.sh`, and the watcher route through the recorded `terminal=` unchanged.
+
+Agent liveness for the session-start sweep and the `bin/secondmate` launcher comes from `fm_backend_orca_agent_alive`.
+Orca exposes no foreground-process primitive (verified 2026-07-14 against Orca app 1.4.116: `orca terminal show --json` carries no process fields, and `orca terminal wait --for exit` returns `{"ok":false,"error":{"code":"timeout"}}` even on an idle shell), so the classifier ports the tmux probe's semantics to the OS level: `lsof -a -d cwd -Fpc -- <terminal worktreePath>` enumerates the processes rooted in the home, and any verified harness comm or bare dotted version token reads `alive`, an only-shells result reads `dead`, and everything else (no processes, a bare interpreter such as pi's `node`, an unreadable terminal, a missing `lsof`) reads `unknown` and is never acted on.
+The probe is cwd-scoped to the worktree rather than the single terminal, which can only err toward `alive` - the direction that never spawns a duplicate.
+Dead respawns (bootstrap sweep and launcher) pass the recorded `backend=` explicitly, so a dead Orca coordinator always comes back on Orca regardless of the session's ambient backend resolution.
+
+Retirement teardown for `kind=secondmate` on Orca closes only the recorded coordinator terminal, then removes the home through the same guarded path every secondmate uses; `orca worktree rm` never runs for a home.
+The Orca CLI has no `repo rm`, so a retired home's Orca repo registration lingers in the app's repo list until removed there manually.
+
+Adoption evidence (2026-07-14, `orca` CLI against `/Applications/Orca.app` 1.4.116, runtime `reachable=true`/`state="ready"`): `orca worktree show --worktree path:/Users/erickmanrique/orca/ggstore/.secondmate --json` returned `result.worktree.id="118c3929-...::/Users/erickmanrique/orca/ggstore/.secondmate"`, `path` equal to the home, and `isMainWorktree=true`; `orca terminal create --help` documents the `--worktree path:<path>` selector used for terminal placement, and `orca terminal list/show --json` return `handle`, `title`, and `worktreePath` as parsed here.
+Disposable end-to-end smoke, same date and versions, against a fresh scratch home never previously known to Orca: `fm_backend_orca_worktree_adopt` registered and resolved it (`id=13c632c5-...::<home>`, path equal to the home); `fm_backend_orca_terminal_find` returned rc=1 before creation; `fm_backend_orca_terminal_create` returned `term_f065fc88-...`; `fm_backend_orca_send_text_line` + `fm_backend_orca_capture` round-tripped `echo fm-orca-smoke-ok`; `fm_backend_orca_agent_alive` classified the bare shell `dead`; find-after returned exactly the created handle; `fm_backend_orca_kill` closed it.
+
 ## Limitations
 
-- `--secondmate` spawns still refuse `backend=orca`; secondmate-home semantics need a separate design.
-- A secondmate may still supervise Orca-backed child ship or scout tasks when its own persistent supervisor runs on a supported non-Orca backend.
 - Escape is unsupported because the current Orca terminal send primitive exposes Enter and interrupt-style input but no verified Escape operation.
 - Orca is explicit-only and is not selected by runtime auto-detection.
 - Orca currently exposes no stable CLI version or protocol marker. Unlike the herdr/zellij/cmux docs, this backend intentionally gates spawn support on runtime reachability from `orca status --json` rather than a version floor.
@@ -120,10 +136,14 @@ Fake-Orca tests cover:
 - scout teardown releasing an Orca worktree through `orca worktree rm`;
 - ship teardown failing closed when the recorded Orca worktree id is missing, cannot resolve to a path, or resolves to a different path than `worktree=`.
 
+Native secondmate hosting (home adoption, titled-terminal reuse and duplicate prevention, the lsof liveness classifier, recorded-backend sweep recovery, and terminal-only retirement) is covered by `tests/fm-backend-orca-secondmate.test.sh`, with the launcher's native-Orca attach/respawn and stale-lock behavior in `tests/fm-secondmate-launcher.test.sh`.
+
 Run the focused suite with:
 
 ```sh
 tests/fm-backend-orca.test.sh
+tests/fm-backend-orca-secondmate.test.sh
+tests/fm-secondmate-launcher.test.sh
 tests/fm-backend.test.sh
 tests/fm-bootstrap.test.sh
 ```

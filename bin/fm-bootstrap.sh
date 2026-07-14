@@ -326,7 +326,10 @@ secondmate_liveness_sweep() {
         ;;
       dead)
         fm_backend_kill "$backend" "$target" 2>/dev/null || true
-        if out=$(FM_SPAWN_NO_GUARD=1 "$FM_ROOT/bin/fm-spawn.sh" "$id" --secondmate 2>&1); then
+        # Respawn on the RECORDED backend (absent backend= means tmux), never
+        # the ambient resolution: a dead Orca-hosted coordinator must come
+        # back on Orca even if this session would resolve a different backend.
+        if out=$(FM_SPAWN_NO_GUARD=1 "$FM_ROOT/bin/fm-spawn.sh" "$id" --secondmate --backend "$backend" 2>&1); then
           echo "SECONDMATE_LIVENESS: secondmate $id: respawned"
         else
           echo "SECONDMATE_LIVENESS: secondmate $id: respawn failed: $(first_line "$out")"

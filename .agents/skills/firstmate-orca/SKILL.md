@@ -39,6 +39,7 @@ Before switching or spawning against Orca:
 
 Use `bin/fm-spawn.sh` so firstmate creates the brief, worktree, terminal, metadata, status file, and watcher surface together.
 Pass `--backend orca` for a one-off Orca task, or rely on the already-selected Orca backend when that selection is intentional.
+A `--secondmate` spawn adopts the provisioned home as the Orca worktree and hosts the coordinator in one `fm-<id>`-titled terminal; `docs/orca-backend.md` ("Secondmate hosting") owns the contract, and the daily launcher flow is `docs/project-secondmate.md`.
 
 After spawn, check the task with firstmate helpers:
 

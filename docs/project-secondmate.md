@@ -26,17 +26,17 @@ secondmate auto
 Run `bin/secondmate` (put `bin/` on PATH or alias it) from the project container, any registered repo, or a repo subdirectory.
 It routes the current directory to the project's registered secondmate and then attaches or starts, never both:
 
-- A confirmed-live coordinator is attached: inside tmux the client switches to its window, outside tmux the launcher execs `tmux attach-session`; running it twice always lands on the same coordinator.
-- A confidently dead endpoint (bare shell left by an exited agent) is cleared and respawned via `bin/fm-spawn.sh --secondmate`.
-- Anything unprovable - ambiguous or unregistered paths, a malformed or foreign-marked home, duplicate or overlapping registry entries, a pane whose agent identity cannot be confirmed, or a concurrent launcher run - fails closed with the reason.
+- A confirmed-live coordinator is attached: inside tmux the client switches to its window, outside tmux the launcher execs `tmux attach-session`, and on a non-tmux backend such as Orca it reports the live coordinator terminal, whose focus is owned by that backend's own UI; running it twice always lands on the same coordinator.
+- A confidently dead endpoint (bare shell left by an exited agent) is cleared and respawned via `bin/fm-spawn.sh --secondmate` on the backend its metadata records, so recovery never migrates a coordinator to a different backend.
+- Anything unprovable - ambiguous or unregistered paths, a malformed or foreign-marked home, duplicate or overlapping registry entries, a pane whose agent identity cannot be confirmed, a stale launch lock whose owner cannot be proven dead, or a concurrent launcher run - fails closed with the reason.
 
 An explicit harness wins for that launch; `auto` defers to the documented secondmate chain (`config/secondmate-harness` -> `config/crew-harness` -> the primary's own harness, including the file's optional model/effort tokens).
-Backend selection starts from the existing spawn contract (`--backend`, `FM_BACKEND`, `config/backend`, runtime auto-detection, then tmux), with one launcher-owned bridge: when no explicit `--backend` is given and that resolution lands on a backend that cannot host a secondmate coordinator (Orca, cmux), the launcher starts the coordinator on tmux and prints a note, so a `config/backend=orca` primary still gets the daily attach workflow below.
-An explicit `--backend orca` (or `cmux`) is forwarded verbatim and surfaces `bin/fm-spawn.sh`'s refusal as a fail-closed diagnostic; the launcher never overrides a backend the caller explicitly requested.
+Backend selection starts from the existing spawn contract (`--backend`, `FM_BACKEND`, `config/backend`, runtime auto-detection, then tmux), with one launcher-owned bridge: when no explicit `--backend` is given and that resolution lands on cmux, which cannot host a secondmate coordinator, the launcher starts the coordinator on tmux and prints a note.
+Orca hosts coordinators natively and is never bridged; an explicit `--backend` is always forwarded verbatim.
 
 ## Daily Orca workflow
 
-Orca terminals are worktree-bound, so the Orca backend does not host secondmate agents directly; the coordinator lives in the tmux backend.
-This holds even when the primary's `config/backend` is `orca`: the implicit-resolution bridge above hosts the coordinator on tmux automatically, no per-launch flag needed.
-Open an Orca terminal anywhere in the project and run `secondmate <harness>` there: the launcher attaches the tmux-backed coordinator inside that terminal, and re-running it from any other terminal switches to the same one.
+With the Orca backend selected (typically `config/backend=orca`), each project's coordinator lives natively in its own Orca terminal inside the project's `.secondmate` worktree - `docs/orca-backend.md` ("Secondmate hosting") owns the mechanics.
+Open the product container in Orca and run `secondmate <harness>` (or `secondmate auto`): the launcher adopts the existing `.secondmate` home as the Orca workspace, starts the coordinator in one `fm-<id>`-titled terminal, and on a rerun reports the already-live terminal instead of duplicating it.
+Several products run their coordinators simultaneously in fully independent Orca terminals; nothing is shared through a tmux session, so no two project windows can mirror each other.
 Crewmate work the secondmate dispatches may still use any spawn-capable backend, including Orca-owned task worktrees, per `bin/fm-spawn.sh`.

@@ -508,32 +508,8 @@ test_spawn_writes_orca_metadata_and_launches_harness() {
   pass "fm-spawn.sh --backend orca: reuses implicit terminal, records metadata, launches harness"
 }
 
-test_spawn_refuses_orca_secondmate_before_home_mutation() {
-  local home subhome data state config id out status
-  id="orcasmz1"
-  home="$TMP_ROOT/secondmate-refusal-home"
-  subhome="$TMP_ROOT/secondmate-refusal-subhome"
-  data="$home/data"
-  state="$home/state"
-  config="$home/config"
-  mkdir -p "$data" "$state" "$config" "$subhome/bin" "$subhome/data" "$subhome/state" "$subhome/projects"
-  printf '%s\n' "$id" > "$subhome/.fm-secondmate-home"
-  printf 'firstmate\n' > "$subhome/AGENTS.md"
-  printf 'claude\n' > "$config/crew-harness"
-  touch "$state/.last-watcher-beat"
-  set +e
-  out=$( FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$home" FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
-    FM_PROJECTS_OVERRIDE="$home/projects" FM_SPAWN_NO_GUARD=1 \
-    "$ROOT/bin/fm-spawn.sh" "$id" "$subhome" claude --backend orca --secondmate 2>&1 )
-  status=$?
-  set +e
-  [ "$status" -ne 0 ] || fail "backend=orca --secondmate should be refused"
-  assert_contains "$out" "backend=orca does not support --secondmate spawns yet" \
-    "orca secondmate refusal should happen at backend selection"
-  assert_absent "$subhome/config/crew-harness" \
-    "orca secondmate refusal should not propagate inheritable config into the secondmate home"
-  pass "fm-spawn.sh --backend orca --secondmate: refuses before secondmate-home mutation"
-}
+# Native Orca secondmate hosting (adoption, duplicate prevention, liveness,
+# retirement, sweep recovery) is covered by tests/fm-backend-orca-secondmate.test.sh.
 
 test_spawn_refuses_orca_when_runtime_not_ready() {
   local proj data state config id out status
@@ -1299,7 +1275,6 @@ test_worktree_and_terminal_helpers_parse_json
 test_worktree_create_removes_worktree_when_path_missing
 test_spawn_preserves_orca_metadata_when_pathless_worktree_cleanup_fails
 test_spawn_writes_orca_metadata_and_launches_harness
-test_spawn_refuses_orca_secondmate_before_home_mutation
 test_spawn_refuses_orca_when_runtime_not_ready
 test_spawn_refuses_orca_nonisolated_worktree
 test_spawn_removes_orca_worktree_when_terminal_create_fails

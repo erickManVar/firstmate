@@ -21,6 +21,10 @@
 #   session provider only, exactly like herdr/zellij, so it does. An
 #   auto-detected herdr or cmux spawn prints a loud stderr notice;
 #   auto-detected tmux stays silent; zellij and orca are never auto-detected.
+#   A --secondmate spawn on orca ADOPTS the provisioned home as the Orca
+#   worktree (fm_backend_orca_worktree_adopt; never `orca worktree create`)
+#   and hosts the coordinator in one fm-<id>-titled Orca terminal, failing
+#   closed on live, unproven, or ambiguous existing titled terminals.
 #   codex-app is not a known backend yet; docs/codex-app-backend.md owns that
 #   blocked backend contract. Default tmux spawns do not write backend= to meta;
 #   absent backend= means tmux. cmux does not support --secondmate spawns yet.
@@ -180,10 +184,6 @@ else
 fi
 fm_backend_validate_spawn "$BACKEND" || exit 1
 fm_backend_source "$BACKEND" || exit 1
-if [ "$BACKEND" = orca ] && [ "$KIND" = secondmate ]; then
-  echo "error: backend=orca does not support --secondmate spawns yet" >&2
-  exit 1
-fi
 if [ "$BACKEND" = cmux ] && [ "$KIND" = secondmate ]; then
   echo "error: backend=cmux does not support --secondmate spawns yet" >&2
   exit 1
@@ -194,6 +194,10 @@ fi
 ORCA_ABORT_CLEANUP=0
 ORCA_WORKTREE_ID=
 ORCA_TERMINAL=
+# For kind=secondmate the Orca worktree IS the persistent home, adopted rather
+# than created; abort cleanup may close the terminal this spawn created but
+# must never remove the worktree.
+ORCA_PRESERVE_WORKTREE=0
 
 parse_orca_worktree_result() {
   local raw=$1 rest
@@ -218,6 +222,9 @@ orca_spawn_abort_cleanup() {
   ORCA_ABORT_CLEANUP=0
   if [ -n "${ORCA_TERMINAL:-}" ]; then
     fm_backend_kill orca "$ORCA_TERMINAL" 2>/dev/null || true
+  fi
+  if [ "${ORCA_PRESERVE_WORKTREE:-0}" = 1 ]; then
+    return "$status"
   fi
   if [ -n "${ORCA_WORKTREE_ID:-}" ]; then
     if ! fm_backend_remove_worktree orca "$ORCA_WORKTREE_ID" 2>/dev/null; then
@@ -771,29 +778,83 @@ EOF
     T="$CMUX_WORKSPACE_ID:$CMUX_SURFACE_ID"
     ;;
   orca)
-    set +e
-    ORCA_WT_RAW=$(fm_backend_orca_worktree_create "$PROJ_ABS" "$W")
-    ORCA_WT_STATUS=$?
-    set -e
-    if [ "$ORCA_WT_STATUS" -ne 0 ]; then
-      if [ "$ORCA_WT_STATUS" -eq 2 ] && [ -n "$ORCA_WT_RAW" ]; then
-        if parse_orca_worktree_result "$ORCA_WT_RAW" && [ -n "$ORCA_WORKTREE_ID" ]; then
-          ORCA_ABORT_CLEANUP=1
-        fi
-      fi
-      exit 1
-    fi
-    parse_orca_worktree_result "$ORCA_WT_RAW" || true
-    ORCA_ABORT_CLEANUP=1
-    if [ -z "$ORCA_WORKTREE_ID" ] || [ -z "$WT" ]; then
-      echo "error: orca did not return a worktree id/path for $W" >&2
-      exit 1
-    fi
-    validate_spawn_worktree "orca worktree create" "$W"
-    if [ -z "$ORCA_TERMINAL" ]; then
+    if [ "$KIND" = secondmate ]; then
+      # Native Orca secondmate hosting (docs/orca-backend.md "Secondmate
+      # hosting"): the already-provisioned home IS the Orca worktree - adopt
+      # and verify it, never create a duplicate worktree or branch. One
+      # coordinator terminal per home, titled fm-<id>; an existing titled
+      # terminal is reused only by clearing it when its agent is CONFIDENTLY
+      # dead, and anything live, unproven, or ambiguous fails closed so a
+      # duplicate coordinator can never launch.
+      ORCA_PRESERVE_WORKTREE=1
+      ORCA_ADOPT_RAW=$(fm_backend_orca_worktree_adopt "$PROJ_ABS") || exit 1
+      ORCA_WORKTREE_ID=${ORCA_ADOPT_RAW%%$'\t'*}
+      [ -n "$ORCA_WORKTREE_ID" ] || { echo "error: orca did not resolve a worktree id for home $PROJ_ABS" >&2; exit 1; }
+      set +e
+      ORCA_EXISTING_TERMINAL=$(fm_backend_orca_terminal_find "$PROJ_ABS" "$W")
+      ORCA_FIND_STATUS=$?
+      set -e
+      case "$ORCA_FIND_STATUS" in
+        0)
+          ORCA_EXISTING_VERDICT=$(fm_backend_orca_agent_alive "$ORCA_EXISTING_TERMINAL")
+          case "$ORCA_EXISTING_VERDICT" in
+            dead)
+              fm_backend_orca_kill "$ORCA_EXISTING_TERMINAL" 2>/dev/null || true
+              ;;
+            alive)
+              echo "error: secondmate $ID already has a live coordinator terminal $ORCA_EXISTING_TERMINAL in $PROJ_ABS; refusing a duplicate launch (attach with bin/secondmate instead)" >&2
+              exit 1
+              ;;
+            *)
+              echo "error: existing coordinator terminal $ORCA_EXISTING_TERMINAL in $PROJ_ABS has unproven agent liveness; inspect it (bin/fm-peek.sh or the Orca app) before relaunching" >&2
+              exit 1
+              ;;
+          esac
+          ;;
+        1) : ;;
+        *)
+          echo "error: ambiguous fm-$ID coordinator terminals in Orca worktree $PROJ_ABS; close the duplicates before launching" >&2
+          exit 1
+          ;;
+      esac
       ORCA_TERMINAL=$(fm_backend_orca_terminal_create "$ORCA_WORKTREE_ID" "$W") || exit 1
+      ORCA_ABORT_CLEANUP=1
+      # Concurrent-duplicate backstop: if another launch raced past the check
+      # above, the home now holds two titled terminals - close ours and fail.
+      set +e
+      fm_backend_orca_terminal_find "$PROJ_ABS" "$W" >/dev/null 2>&1
+      ORCA_RECHECK_STATUS=$?
+      set -e
+      if [ "$ORCA_RECHECK_STATUS" -eq 2 ]; then
+        echo "error: concurrent duplicate launch detected for fm-$ID in $PROJ_ABS; closing this terminal and failing closed" >&2
+        exit 1
+      fi
+      T="$ORCA_TERMINAL"
+    else
+      set +e
+      ORCA_WT_RAW=$(fm_backend_orca_worktree_create "$PROJ_ABS" "$W")
+      ORCA_WT_STATUS=$?
+      set -e
+      if [ "$ORCA_WT_STATUS" -ne 0 ]; then
+        if [ "$ORCA_WT_STATUS" -eq 2 ] && [ -n "$ORCA_WT_RAW" ]; then
+          if parse_orca_worktree_result "$ORCA_WT_RAW" && [ -n "$ORCA_WORKTREE_ID" ]; then
+            ORCA_ABORT_CLEANUP=1
+          fi
+        fi
+        exit 1
+      fi
+      parse_orca_worktree_result "$ORCA_WT_RAW" || true
+      ORCA_ABORT_CLEANUP=1
+      if [ -z "$ORCA_WORKTREE_ID" ] || [ -z "$WT" ]; then
+        echo "error: orca did not return a worktree id/path for $W" >&2
+        exit 1
+      fi
+      validate_spawn_worktree "orca worktree create" "$W"
+      if [ -z "$ORCA_TERMINAL" ]; then
+        ORCA_TERMINAL=$(fm_backend_orca_terminal_create "$ORCA_WORKTREE_ID" "$W") || exit 1
+      fi
+      T="$ORCA_TERMINAL"
     fi
-    T="$ORCA_TERMINAL"
     ;;
 esac
 # #134 robustness: only tmux needs a worktree-detection target distinct from $T -

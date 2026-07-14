@@ -26,22 +26,20 @@
 #   fm-spawn resolves the documented secondmate chain
 #   (config/secondmate-harness -> config/crew-harness -> own harness, plus the
 #   file's optional model/effort tokens; bin/fm-harness.sh secondmate).
-#   Backend selection: an explicit --backend is forwarded verbatim, so
-#   explicitly requesting a backend that refuses --secondmate spawns (orca,
-#   cmux today) still surfaces fm-spawn's refusal as the fail-closed blocker.
-#   Without --backend, the launcher resolves the same chain fm-spawn would
-#   (FM_BACKEND, then config/backend, then runtime auto-detection, then tmux;
-#   fm_backend_name) and, when that resolution lands on a backend that cannot
-#   host a persistent coordinator (orca, cmux), bridges the launch to tmux
-#   with a stderr note: the daily workflow is attaching the tmux coordinator
-#   from a terminal that backend owns (docs/project-secondmate.md "Daily Orca
-#   workflow"), so an implicitly-inherited non-hosting backend must not
-#   refuse. Hosting backends (tmux, herdr, zellij) resolve exactly as before,
-#   and the launcher never overrides a backend the caller explicitly asked
-#   for.
+#   Backend selection: an explicit --backend is forwarded verbatim. A dead
+#   endpoint respawns on the backend its meta records (absent backend= means
+#   tmux), so a coordinator never silently changes hosting on recovery.
+#   Otherwise the launcher leaves resolution to fm-spawn's own chain
+#   (FM_BACKEND, then config/backend, then runtime auto-detection, then tmux)
+#   with one exception: when that resolution lands on cmux, which cannot host
+#   a persistent coordinator, the launch bridges to tmux with a stderr note.
+#   Orca hosts coordinators natively (docs/orca-backend.md "Secondmate
+#   hosting"), so it is never bridged.
 #   A per-secondmate launch lock under state/ serializes concurrent launcher
 #   runs for the same id, so two racing invocations cannot both observe "not
-#   live" and spawn twice.
+#   live" and spawn twice. The lock records its owner pid; a lock whose owner
+#   is provably dead is reclaimed once, and anything unprovable (no pid, a
+#   live pid, a kill-probe error) stays fail-closed.
 #   --no-attach reports the live or spawned target without touching the
 #   caller's terminal (for scripts and tests).
 # The primary firstmate home is $FM_HOME when set, else this repo root; the
@@ -141,14 +139,54 @@ marker_id=$(cat "$HOME_PATH/$SUB_HOME_MARKER" 2>/dev/null || true)
 }
 
 # Serialize concurrent launcher runs per secondmate so two racing invocations
-# cannot both classify the endpoint as not-live and spawn a duplicate.
+# cannot both classify the endpoint as not-live and spawn a duplicate. The
+# lock dir records its owner pid. On contention a lock is reclaimed ONLY when
+# that pid is provably dead (kill -0 reports no such process), and the reclaim
+# itself is an atomic ownership transition: the contender renames the exact
+# stale lock directory to a unique claimant path, so of any number of racing
+# contenders authorized by the same dead owner exactly one wins the rename and
+# may create the canonical lock - the losers' rename fails and they fail
+# closed, never removing a path another contender now owns. If the rename
+# turns out to have grabbed a lock whose recorded owner changed or revived, it
+# is renamed back best-effort and the contender fails closed. Cleanup is
+# ownership-guarded: a process only ever removes a lock whose recorded pid is
+# its own.
 mkdir -p "$STATE"
 LOCK="$STATE/.secondmate-launch-$ID.lock"
-if ! mkdir "$LOCK" 2>/dev/null; then
-  echo "error: another launch for $ID is already in progress ($LOCK); retry in a moment" >&2
-  exit 1
+acquire_launch_lock() {
+  mkdir "$LOCK" 2>/dev/null || return 1
+  printf '%s\n' "$$" > "$LOCK/pid"
+  return 0
+}
+release_launch_lock() {
+  [ "$(cat "$LOCK/pid" 2>/dev/null || true)" = "$$" ] || return 0
+  rm -rf "$LOCK" 2>/dev/null || true
+}
+reclaim_stale_launch_lock() {
+  local owner_pid claim claimed_pid
+  owner_pid=$(cat "$LOCK/pid" 2>/dev/null || true)
+  case "$owner_pid" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  kill -0 "$owner_pid" 2>/dev/null && return 1
+  claim="$LOCK.claim.$$"
+  mv "$LOCK" "$claim" 2>/dev/null || return 1
+  claimed_pid=$(cat "$claim/pid" 2>/dev/null || true)
+  if [ "$claimed_pid" != "$owner_pid" ] || kill -0 "$claimed_pid" 2>/dev/null; then
+    mv "$claim" "$LOCK" 2>/dev/null || true
+    return 1
+  fi
+  echo "note: reclaiming stale launch lock for $ID (owner pid $owner_pid is dead)" >&2
+  rm -rf "$claim" 2>/dev/null || true
+  return 0
+}
+if ! acquire_launch_lock; then
+  if ! reclaim_stale_launch_lock || ! acquire_launch_lock; then
+    echo "error: another launch for $ID is already in progress ($LOCK); retry in a moment" >&2
+    exit 1
+  fi
 fi
-trap 'rmdir "$LOCK" 2>/dev/null || true' EXIT
+trap 'release_launch_lock' EXIT
 
 meta_value() {  # <meta-file> <key>
   sed -n "s/^$2=//p" "$1" | head -1
@@ -172,7 +210,7 @@ attach() {  # <target> <backend>
   fi
   session=${target%%:*}
   tmux select-window -t "$target" 2>/dev/null || true
-  rmdir "$LOCK" 2>/dev/null || true
+  release_launch_lock
   trap - EXIT
   if [ -n "${TMUX:-}" ]; then
     exec tmux switch-client -t "$target"
@@ -186,7 +224,9 @@ TARGET=
 BACKEND=tmux
 if [ -f "$META" ]; then
   BACKEND=$(fm_backend_of_meta "$META")
-  TARGET=$(meta_value "$META" window)
+  # The backend target, not the window alias: for Orca the recorded terminal
+  # handle is what capture/liveness/kill operate on (fm_backend_target_of_meta).
+  TARGET=$(fm_backend_target_of_meta "$META")
   meta_home=$(meta_value "$META" home)
   if [ -n "$meta_home" ] && [ "$meta_home" != "$HOME_PATH" ]; then
     echo "error: state/$ID.meta records home $meta_home but the registry routes to $HOME_PATH; reconcile before launching" >&2
@@ -226,17 +266,22 @@ spawn_args=("$ID" --secondmate)
 [ "$HARNESS" = auto ] || spawn_args+=(--harness "$HARNESS")
 if [ -n "$BACKEND_ARG" ]; then
   spawn_args+=(--backend "$BACKEND_ARG")
+elif [ -f "$META" ]; then
+  # A dead-endpoint respawn stays on the RECORDED backend (absent backend=
+  # means tmux), so recovery never silently migrates a coordinator to
+  # whatever this session's ambient resolution happens to be.
+  spawn_args+=(--backend "$BACKEND")
 else
-  # Implicit-resolution bridge: orca and cmux cannot host a persistent
-  # coordinator (fm-spawn refuses --secondmate on them), so when the primary's
+  # Implicit-resolution bridge, cmux only: cmux cannot host a persistent
+  # coordinator (fm-spawn refuses --secondmate on it), so when the primary's
   # normal resolution lands there the coordinator launches on tmux instead of
-  # refusing. Explicit --backend requests above stay forwarded verbatim so the
-  # fail-closed refusal diagnostic is preserved. Resolution stderr (the
-  # auto-detect notices) is suppressed here; fm-spawn re-resolves and prints
-  # them itself on the non-bridged path.
+  # refusing. Orca hosts coordinators natively and is never bridged.
+  # Explicit --backend requests above stay forwarded verbatim so fm-spawn's
+  # own diagnostics are preserved. Resolution stderr (the auto-detect notices)
+  # is suppressed here; fm-spawn re-resolves and prints them itself.
   RESOLVED_BACKEND=$(fm_backend_name 2>/dev/null)
   case "$RESOLVED_BACKEND" in
-    orca|cmux)
+    cmux)
       echo "note: backend '$RESOLVED_BACKEND' cannot host a secondmate coordinator; launching it on tmux instead (pass --backend $RESOLVED_BACKEND to see the refusal)" >&2
       spawn_args+=(--backend tmux)
       ;;
@@ -246,6 +291,6 @@ fi
 
 [ -f "$META" ] || { echo "error: spawn reported success but no meta at $META" >&2; exit 1; }
 BACKEND=$(fm_backend_of_meta "$META")
-TARGET=$(meta_value "$META" window)
+TARGET=$(fm_backend_target_of_meta "$META")
 report_target "started" "$TARGET" "$BACKEND"
 attach "$TARGET" "$BACKEND"

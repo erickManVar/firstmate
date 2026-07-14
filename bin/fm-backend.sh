@@ -706,11 +706,12 @@ fm_backend_target_exists() {  # <backend> <target> [expected-label]
 #             structurally-gone/no-agent-registered pane (herdr).
 #   unknown - anything ambiguous, unreadable, or unverified for this backend.
 # Scoped to today's --secondmate-spawn-capable backends with an empirically
-# verified classifier: tmux (docs/tmux-backend.md "Agent liveness probe") and
+# verified classifier: tmux (docs/tmux-backend.md "Agent liveness probe"),
 # herdr (docs/herdr-backend.md "Agent liveness probe reuses the husk
-# classifier"). zellij, orca, and cmux report unknown until independently
-# verified - future work, not a functional gap for the two backends
-# --secondmate spawns actually support today plus tmux's reference path.
+# classifier"), and orca (docs/orca-backend.md "Secondmate hosting" - an
+# lsof cwd-scoped port of the tmux semantics, since Orca exposes no
+# foreground-process primitive). zellij and cmux report unknown until
+# independently verified.
 # Callers must treat unknown exactly like an unreadable target: NEVER license
 # an action from it alone - the secondmate-liveness sweep gates a respawn on
 # `dead` only, precisely so a momentary read glitch can never duplicate a
@@ -721,6 +722,7 @@ fm_backend_agent_alive() {  # <backend> <target>
   case "$backend" in
     tmux) fm_backend_tmux_agent_alive "$target" ;;
     herdr) fm_backend_herdr_agent_alive "$target" ;;
+    orca) fm_backend_orca_agent_alive "$target" ;;
     *) printf 'unknown' ;;
   esac
 }
