@@ -427,7 +427,7 @@ bin/fm-spawn.sh <id> [<firstmate-home>] --secondmate   # launch or recover a per
 bin/fm-spawn.sh <id1>=<project1>/<repo1> <id2>=<project2>/<repo2> [--scout]   # batch: one call, several tasks
 ```
 
-Batch dispatch spawns each `id=repo` pair through the same single-task path, with shared `--scout`, `--harness`, `--model`, `--effort`, and `--backend` flags applying to all; one failed pair does not stop the rest, and the batch exits non-zero.
+Batch dispatch spawns each `id=project-or-project/repo` pair through the same single-task path, with shared `--scout`, `--harness`, `--model`, `--effort`, and `--backend` flags applying to all; one failed pair does not stop the rest, and the batch exits non-zero.
 When `config/crew-dispatch.json` exists, include an explicit resolved harness for every crewmate or scout spawn or batch after consulting the dispatch rules (section 4).
 `bin/fm-spawn.sh`'s header owns the full resolution contract: harness and runtime-backend resolution order, spawn-capable backends and the `codex-app` rejection, verified launch templates, delivery-mode resolution, recorded meta fields, and per-harness turn-end hook installation.
 A backend spawn refusal - a missing dependency, an unauthenticated socket, or a version gate - must be surfaced to the captain as a blocker; never silently retry the spawn on a different backend to work around it.
