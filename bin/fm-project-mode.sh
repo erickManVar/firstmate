@@ -7,6 +7,8 @@
 #   - <name> - <desc> (added <date>)                  -> no-mistakes off  (legacy default)
 #   - <name> [<mode>] - <desc> (added <date>)          -> <mode> off
 #   - <name> [<mode> +yolo] - <desc> (added <date>)    -> <mode> on
+# Shared project-container entries append explicit repo metadata before added:
+#   - <name> [<mode>] - <desc> (repos: <repo>[, <repo>...]; added <date>)
 #
 # mode = how a finished change reaches main:
 #   no-mistakes  full pipeline -> PR -> captain merge (default)
@@ -26,7 +28,10 @@ FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 REG="$DATA/projects.md"
-NAME=${1:?usage: fm-project-mode.sh <project-name>}
+INPUT=${1:?usage: fm-project-mode.sh <project-name-or-selector>}
+# shellcheck source=bin/fm-projects-lib.sh
+. "$SCRIPT_DIR/fm-projects-lib.sh"
+NAME=$(fm_project_name_from_arg "$INPUT" 2>/dev/null || basename "$INPUT")
 
 if [ ! -f "$REG" ]; then
   echo "warn: no registry at $REG; defaulting $NAME to no-mistakes off" >&2

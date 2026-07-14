@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Focused behavior tests for config/projects-root, shared secondmate seeding,
-# registry-driven fleet sync, and read-only project-to-secondmate routing.
+# Focused behavior tests for registry-driven project containers, colocated
+# secondmate homes, legacy project compatibility, sync, and route lookup.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -18,187 +18,221 @@ resolver_call() {
     '. "$1/bin/fm-projects-lib.sh"; eval "$2"' bash "$ROOT" "$expression"
 }
 
-test_resolver_precedence_and_safety() {
-  local home shared override out err
+make_repo() {
+  local path=$1 remote=$2
+  fm_git_init_commit "$path"
+  fm_git_add_origin "$path" "$remote"
+}
+
+test_resolver_precedence_and_fail_closed_config() {
+  local home base override out err
   home="$TMP_ROOT/resolver-home"
-  shared="$TMP_ROOT/shared catalog"
-  override="$TMP_ROOT/override catalog"
+  base="$TMP_ROOT/orca-base"
+  override="$TMP_ROOT/override-base"
   err="$TMP_ROOT/resolver.err"
-  mkdir -p "$home/config" "$home/data" "$home/projects" "$shared" "$override"
+  mkdir -p "$home/config" "$home/data" "$home/projects" "$base" "$override"
 
   out=$(resolver_call "$home" 'fm_projects_root') || fail "legacy root resolution failed"
   [ "$out" = "$home/projects" ] || fail "legacy root was not FM_HOME/projects"
-
-  printf '%s\n' "$shared" > "$home/config/projects-root"
-  out=$(resolver_call "$home" 'fm_projects_root') || fail "configured root resolution failed"
-  [ "$out" = "$shared" ] || fail "config/projects-root did not win over the legacy root"
   out=$(resolver_call "$home" 'fm_projects_mode')
-  [ "$out" = shared-external ] || fail "configured root was not classified shared-external"
+  [ "$out" = legacy-local ] || fail "absent config did not preserve legacy mode"
+
+  printf '%s\n' "$base" > "$home/config/projects-root"
+  out=$(resolver_call "$home" 'fm_projects_root') || fail "configured base resolution failed"
+  [ "$out" = "$base" ] || fail "config/projects-root did not win"
+  out=$(resolver_call "$home" 'fm_projects_mode')
+  [ "$out" = shared-external ] || fail "configured base did not select shared container mode"
 
   out=$(resolver_call "$home" 'fm_projects_root' FM_PROJECTS_OVERRIDE="$override") \
-    || fail "override root resolution failed"
+    || fail "override base resolution failed"
   [ "$out" = "$override" ] || fail "FM_PROJECTS_OVERRIDE did not have highest precedence"
 
   printf '%s\n' 'relative/catalog' > "$home/config/projects-root"
   if resolver_call "$home" 'fm_projects_root' > /dev/null 2>"$err"; then
     fail "relative config/projects-root was accepted"
   fi
-  assert_grep 'must contain an absolute path' "$err" "relative root refusal was not explained"
+  assert_grep 'must contain an absolute path' "$err" "relative-root refusal was not explained"
 
-  printf '%s\n' "$shared" > "$home/config/projects-root"
-  mkdir -p "$shared/alpha" "$shared/firstmate" "$shared/.secondmates"
-  printf '%s\n' '- alpha [direct-PR] - alpha (added 2026-07-13)' > "$home/data/projects.md"
-  out=$(resolver_call "$home" 'fm_project_registry_names')
-  [ "$out" = alpha ] || fail "registry enumeration included an unregistered shared-root directory"
-  if resolver_call "$home" 'fm_project_path ../alpha' >/dev/null 2>"$err"; then
-    fail "unsafe project name was accepted"
+  rm -f "$home/config/projects-root"
+  ln -s "$home/config/missing-root" "$home/config/projects-root"
+  if resolver_call "$home" 'fm_projects_root' > /dev/null 2>"$err"; then
+    fail "dangling projects-root symlink fell back to legacy projects"
   fi
-  pass "project resolver preserves precedence, rejects unsafe config, and enumerates the registry only"
+  assert_grep 'must not be a symlink' "$err" "dangling config did not fail closed"
+  pass "project base precedence is explicit and invalid config never fails open"
 }
 
-setup_shared_seed_world() {
-  SHARED_HOME="$TMP_ROOT/shared-main"
-  SHARED_ROOT="$TMP_ROOT/shared-root"
-  SHARED_SUB="$TMP_ROOT/shared-secondmate"
-  mkdir -p "$SHARED_HOME/config" "$SHARED_HOME/data" "$SHARED_HOME/state" "$SHARED_HOME/projects"
-  mkdir -p "$SHARED_ROOT/firstmate" "$SHARED_ROOT/.secondmates"
-  mkdir -p "$SHARED_SUB/bin"
-  printf 'test firstmate home\n' > "$SHARED_SUB/AGENTS.md"
-  printf 'config/projects-root\nprojects/\ndata/\nstate/\n.fm-secondmate-home\n' > "$SHARED_SUB/.gitignore"
-  git -C "$SHARED_SUB" init -q
-  git -C "$SHARED_SUB" add AGENTS.md .gitignore
-  git -C "$SHARED_SUB" commit -qm initial
-  fm_git_init_commit "$SHARED_ROOT/alpha"
-  fm_git_add_origin "$SHARED_ROOT/alpha" "$TMP_ROOT/remotes/shared-alpha.git"
-  fm_git_init_commit "$SHARED_ROOT/gamma"
-  fm_git_add_origin "$SHARED_ROOT/gamma" "$TMP_ROOT/remotes/shared-gamma.git"
-  git -C "$SHARED_ROOT/gamma" remote add no-mistakes "file://$TMP_ROOT/remotes/no-mistakes-gamma.git"
-  cat > "$SHARED_HOME/data/projects.md" <<EOF
-- alpha [direct-PR] - alpha project (added 2026-07-13)
-- gamma [no-mistakes] - gamma project (added 2026-07-13)
+setup_container_world() {
+  MAIN_HOME="$TMP_ROOT/main-home"
+  ORCA_BASE="$TMP_ROOT/orca"
+  ALPHA_CONTAINER="$ORCA_BASE/alpha"
+  GAMMA_CONTAINER="$ORCA_BASE/gamma"
+  ALPHA_API="$ALPHA_CONTAINER/api"
+  ALPHA_WEB="$ALPHA_CONTAINER/web"
+  GAMMA_REPO="$GAMMA_CONTAINER/service"
+  ALPHA_HOME="$ALPHA_CONTAINER/.secondmate"
+  mkdir -p "$MAIN_HOME/config" "$MAIN_HOME/data" "$MAIN_HOME/state" "$MAIN_HOME/projects"
+  mkdir -p "$ORCA_BASE/workspaces" "$ORCA_BASE/firstmate" "$ALPHA_CONTAINER" "$GAMMA_CONTAINER"
+  make_repo "$ALPHA_API" "$TMP_ROOT/remotes/alpha-api.git"
+  make_repo "$ALPHA_WEB" "$TMP_ROOT/remotes/alpha-web.git"
+  make_repo "$GAMMA_REPO" "$TMP_ROOT/remotes/gamma.git"
+  git -C "$GAMMA_REPO" remote add no-mistakes "file://$TMP_ROOT/remotes/no-mistakes-gamma.git"
+  cat > "$MAIN_HOME/data/projects.md" <<EOF
+- alpha [direct-PR] - alpha product (repos: api, web; added 2026-07-13)
+- gamma [no-mistakes] - gamma product (repos: service; added 2026-07-13)
 EOF
-  printf '%s\n' "$SHARED_ROOT" > "$SHARED_HOME/config/projects-root"
+  printf '%s\n' "$ORCA_BASE" > "$MAIN_HOME/config/projects-root"
 }
 
-test_shared_seed_is_reference_only_and_transactional() {
-  local before_alpha before_gamma out bad_repo bad_home err rollback_home old_root symlink_home sentinel
-  setup_shared_seed_world
-  before_alpha=$(git -C "$SHARED_ROOT/alpha" status --porcelain=v1; git -C "$SHARED_ROOT/alpha" rev-parse HEAD)
-  before_gamma=$(git -C "$SHARED_ROOT/gamma" status --porcelain=v1; git -C "$SHARED_ROOT/gamma" rev-parse HEAD)
+test_registry_drives_containers_and_repo_selection() {
+  local out err names bad_home bad_base
+  setup_container_world
+  err="$TMP_ROOT/container.err"
+  names=$(resolver_call "$MAIN_HOME" 'fm_project_registry_names') \
+    || fail "container registry enumeration failed"
+  [ "$names" = $'alpha\ngamma' ] || fail "registry names were not authoritative: $names"
 
-  out=$(FM_HOME="$SHARED_HOME" FM_SECONDMATE_CHARTER='shared catalog domain' \
-    FM_SECONDMATE_SCOPE='shared alpha and gamma work' \
-    "$ROOT/bin/fm-home-seed.sh" shared "$SHARED_SUB" alpha gamma) \
-    || fail "shared secondmate seed failed"
-  assert_contains "$out" "home=$SHARED_SUB" "shared seed did not report the home"
-  assert_present "$SHARED_SUB/projects" "shared seed did not keep the internal operational projects directory"
-  [ -z "$(find "$SHARED_SUB/projects" -mindepth 1 -maxdepth 1 -print)" ] \
-    || fail "shared seed cloned a project into the secondmate home"
-  assert_grep "$SHARED_ROOT" "$SHARED_SUB/config/projects-root" "projects-root was not inherited at seed time"
-  assert_grep 'alpha project' "$SHARED_SUB/data/projects.md" "shared seed did not copy the project registry entry"
-  [ "$before_alpha" = "$(git -C "$SHARED_ROOT/alpha" status --porcelain=v1; git -C "$SHARED_ROOT/alpha" rev-parse HEAD)" ] \
-    || fail "shared seed mutated alpha"
-  [ "$before_gamma" = "$(git -C "$SHARED_ROOT/gamma" status --porcelain=v1; git -C "$SHARED_ROOT/gamma" rev-parse HEAD)" ] \
-    || fail "shared seed mutated gamma"
+  out=$(resolver_call "$MAIN_HOME" 'fm_project_container_path alpha') \
+    || fail "alpha container did not resolve"
+  [ "$out" = "$ALPHA_CONTAINER" ] || fail "alpha container resolved incorrectly: $out"
+  out=$(resolver_call "$MAIN_HOME" 'fm_project_repo_paths alpha') \
+    || fail "alpha repos did not resolve"
+  [ "$out" = "$ALPHA_API"$'\n'"$ALPHA_WEB" ] || fail "alpha repos were not explicit and ordered: $out"
+  out=$(resolver_call "$MAIN_HOME" 'fm_project_path alpha api') \
+    || fail "alpha/api selector did not resolve"
+  [ "$out" = "$ALPHA_API" ] || fail "alpha/api resolved incorrectly: $out"
+  out=$(resolver_call "$MAIN_HOME" 'fm_project_resolve_arg alpha/web') \
+    || fail "alpha/web caller selector did not resolve"
+  [ "$out" = "$ALPHA_WEB" ] || fail "alpha/web resolved incorrectly: $out"
+  if resolver_call "$MAIN_HOME" 'fm_project_path alpha' > /dev/null 2>"$err"; then
+    fail "multi-repo project resolved without a repo selector"
+  fi
+  assert_grep 'select one as alpha/<repo>' "$err" "multi-repo ambiguity was not explained"
 
-  bad_repo="$SHARED_ROOT/unready"
-  bad_home="$TMP_ROOT/unready-secondmate"
+  mkdir -p "$ORCA_BASE/unregistered"
+  make_repo "$ORCA_BASE/unregistered/repo" "$TMP_ROOT/remotes/unregistered.git"
+  assert_not_contains "$names" unregistered "unregistered container was discovered"
+
+  bad_home="$TMP_ROOT/reserved-home"
+  bad_base="$TMP_ROOT/reserved-base"
+  mkdir -p "$bad_home/config" "$bad_home/data" "$bad_home/projects" "$bad_base/workspaces/repo"
+  printf '%s\n' "$bad_base" > "$bad_home/config/projects-root"
+  printf '%s\n' '- workspaces [direct-PR] - reserved (repos: repo; added 2026-07-13)' > "$bad_home/data/projects.md"
+  if resolver_call "$bad_home" 'fm_project_container_path workspaces' > /dev/null 2>"$err"; then
+    fail "reserved Orca workspaces directory was accepted as a project container"
+  fi
+  assert_grep 'reserved or unsafe project container' "$err" "reserved container refusal was not explicit"
+
+  rm -f "$bad_home/data/projects.md"
+  mkdir "$bad_home/data/projects.md"
+  if resolver_call "$bad_home" 'fm_project_registry_names' > /dev/null 2>"$err"; then
+    fail "invalid registry type looked like an empty registry"
+  fi
+  assert_grep 'readable regular file' "$err" "registry read failure was swallowed"
+
+  rmdir "$bad_home/data/projects.md"
+  cat > "$bad_home/data/projects.md" <<EOF
+- alpha [direct-PR] - first (repos: api; added 2026-07-13)
+- beta [direct-PR] - middle (repos: api; added 2026-07-13)
+- alpha [direct-PR] - duplicate (repos: web; added 2026-07-13)
+EOF
+  if resolver_call "$bad_home" 'fm_project_registry_names' > /dev/null 2>"$err"; then
+    fail "non-adjacent duplicate project registry entries were accepted"
+  fi
+  assert_grep 'duplicate project name' "$err" "duplicate project refusal was not explicit"
+
+  printf '%s\n' '- alpha [direct-PR] - duplicate repos (repos: api, web, api; added 2026-07-13)' \
+    > "$bad_home/data/projects.md"
+  if resolver_call "$bad_home" 'fm_project_registry_repo_names alpha' > /dev/null 2>"$err"; then
+    fail "non-adjacent duplicate repo registry entries were accepted"
+  fi
+  assert_grep 'duplicate repo name' "$err" "duplicate repo refusal was not explicit"
+  pass "registered containers resolve one or many sibling repos without root discovery"
+}
+
+test_legacy_single_repo_compatibility() {
+  local home out
+  home="$TMP_ROOT/legacy-home"
+  mkdir -p "$home/config" "$home/data" "$home/projects"
+  make_repo "$home/projects/legacy" "$TMP_ROOT/remotes/legacy.git"
+  printf '%s\n' '- legacy [direct-PR] - legacy project (added 2026-07-13)' > "$home/data/projects.md"
+  out=$(resolver_call "$home" 'fm_project_path legacy') || fail "legacy project did not resolve"
+  [ "$out" = "$home/projects/legacy" ] || fail "legacy project path changed: $out"
+  pass "absent projects-root preserves the one-repo FM_HOME/projects contract"
+}
+
+test_container_seed_is_reference_only_and_colocated() {
+  local before_api before_web out bad_home err
+  before_api=$(git -C "$ALPHA_API" status --porcelain=v1; git -C "$ALPHA_API" rev-parse HEAD)
+  before_web=$(git -C "$ALPHA_WEB" status --porcelain=v1; git -C "$ALPHA_WEB" rev-parse HEAD)
+
+  out=$(FM_HOME="$MAIN_HOME" FM_SECONDMATE_CHARTER='alpha container domain' \
+    FM_SECONDMATE_SCOPE='alpha product work' \
+    "$ROOT/bin/fm-home-seed.sh" alpha-sm "$ALPHA_HOME" alpha) \
+    || fail "colocated container secondmate seed failed"
+  assert_contains "$out" "home=$ALPHA_HOME" "seed did not report the colocated home"
+  assert_present "$ALPHA_HOME/.fm-secondmate-home" "seed did not mark the secondmate home"
+  [ ! -L "$ALPHA_HOME" ] || fail "colocated secondmate home is a symlink"
+  assert_present "$ALPHA_HOME/projects" "seed did not retain the internal legacy projects directory"
+  [ -z "$(find "$ALPHA_HOME/projects" -mindepth 1 -maxdepth 1 -print)" ] \
+    || fail "container seed cloned repos into the secondmate home"
+  assert_grep "$ORCA_BASE" "$ALPHA_HOME/config/projects-root" "project base was not inherited"
+  assert_grep 'repos: api, web' "$ALPHA_HOME/data/projects.md" "explicit repo registry was not inherited"
+  [ "$before_api" = "$(git -C "$ALPHA_API" status --porcelain=v1; git -C "$ALPHA_API" rev-parse HEAD)" ] \
+    || fail "seed mutated alpha/api"
+  [ "$before_web" = "$(git -C "$ALPHA_WEB" status --porcelain=v1; git -C "$ALPHA_WEB" rev-parse HEAD)" ] \
+    || fail "seed mutated alpha/web"
+
+  git -C "$GAMMA_REPO" remote remove no-mistakes
+  bad_home="$GAMMA_CONTAINER/.secondmate"
   err="$TMP_ROOT/unready.err"
-  fm_git_init_commit "$bad_repo"
-  fm_git_add_origin "$bad_repo" "$TMP_ROOT/remotes/unready.git"
-  printf '%s\n' '- unready [no-mistakes] - unready project (added 2026-07-13)' >> "$SHARED_HOME/data/projects.md"
-  if FM_HOME="$SHARED_HOME" FM_SECONDMATE_CHARTER='unready domain' \
-      "$ROOT/bin/fm-home-seed.sh" unready "$bad_home" unready > /dev/null 2>"$err"; then
-    fail "shared seed accepted an uninitialized no-mistakes checkout"
+  if FM_HOME="$MAIN_HOME" FM_SECONDMATE_CHARTER='gamma domain' \
+      "$ROOT/bin/fm-home-seed.sh" gamma-sm "$bad_home" gamma > /dev/null 2>"$err"; then
+    fail "shared seed accepted an uninitialized no-mistakes repo"
   fi
-  assert_grep 'refusing to mutate the external checkout' "$err" "shared seed refusal was not explicit"
+  assert_grep 'refusing to mutate the external checkout' "$err" "unready repo refusal was not explicit"
   assert_absent "$bad_home" "failed shared seed left a secondmate home behind"
-  [ -z "$(git -C "$bad_repo" status --porcelain=v1)" ] || fail "failed shared seed mutated the external checkout"
-
-  rollback_home="$TMP_ROOT/rollback-secondmate"
-  old_root="$TMP_ROOT/old-root"
-  mkdir -p "$rollback_home/bin" "$rollback_home/config" "$old_root" "$SHARED_HOME/data/rollback"
-  printf 'test firstmate home\n' > "$rollback_home/AGENTS.md"
-  printf 'config/projects-root\nprojects/\ndata/\nstate/\n.fm-secondmate-home\n' > "$rollback_home/.gitignore"
-  git -C "$rollback_home" init -q
-  git -C "$rollback_home" add AGENTS.md .gitignore
-  git -C "$rollback_home" commit -qm initial
-  printf '%s\n' "$old_root" > "$rollback_home/config/projects-root"
-  cat > "$SHARED_HOME/data/rollback/brief.md" <<'EOF'
-# Charter
-{TASK}
-# Routing scope
-rollback fixture
-# Project access
-- alpha
-EOF
-  if FM_HOME="$SHARED_HOME" "$ROOT/bin/fm-home-seed.sh" rollback "$rollback_home" alpha \
-      > /dev/null 2>"$TMP_ROOT/rollback.err"; then
-    fail "shared seed accepted a placeholder charter"
-  fi
-  assert_grep "$old_root" "$rollback_home/config/projects-root" \
-    "shared seed rollback did not restore the preexisting projects-root"
-  [ -d "$SHARED_ROOT/alpha/.git" ] || fail "shared seed rollback removed the external checkout"
-
-  symlink_home="$TMP_ROOT/symlink-secondmate"
-  sentinel="$TMP_ROOT/projects-root-sentinel"
-  mkdir -p "$symlink_home/bin" "$symlink_home/config"
-  printf 'test firstmate home\n' > "$symlink_home/AGENTS.md"
-  printf 'unchanged\n' > "$sentinel"
-  ln -s "$sentinel" "$symlink_home/config/projects-root"
-  if FM_HOME="$SHARED_HOME" FM_SECONDMATE_CHARTER='symlink fixture' \
-      "$ROOT/bin/fm-home-seed.sh" symlink "$symlink_home" alpha > /dev/null 2>"$TMP_ROOT/symlink.err"; then
-    fail "shared seed accepted a symlinked projects-root destination"
-  fi
-  assert_grep 'must not be a symlink' "$TMP_ROOT/symlink.err" "shared seed did not explain the symlink refusal"
-  [ "$(cat "$sentinel")" = unchanged ] || fail "shared seed wrote through a projects-root symlink"
-  pass "shared secondmate seeding references initialized external repos and rollback owns no external path"
+  pass "container seeding creates a real sibling .secondmate and owns no canonical repo"
 }
 
-test_registry_sync_and_secondmate_delegation() {
-  local extra out
-  extra="$SHARED_ROOT/unregistered"
-  fm_git_init_commit "$extra"
-  fm_git_add_origin "$extra" "$TMP_ROOT/remotes/unregistered.git"
+test_registry_sync_and_route_from_container_context() {
+  local out rc
+  out=$(FM_HOME="$MAIN_HOME" FM_FLEET_PRUNE=0 "$ROOT/bin/fm-fleet-sync.sh" 2>/dev/null)
+  assert_not_contains "$out" 'unregistered:' "fleet sync discovered an unregistered container"
 
-  out=$(FM_HOME="$SHARED_HOME" FM_FLEET_PRUNE=0 "$ROOT/bin/fm-fleet-sync.sh" 2>/dev/null)
-  assert_not_contains "$out" 'unregistered:' "whole-fleet sync enumerated an unregistered shared-root repo"
-
-  out=$(FM_HOME="$SHARED_SUB" FM_FLEET_PRUNE=0 "$ROOT/bin/fm-fleet-sync.sh" 2>/dev/null)
+  out=$(FM_HOME="$ALPHA_HOME" FM_FLEET_PRUNE=0 "$ROOT/bin/fm-fleet-sync.sh" 2>/dev/null)
   assert_contains "$out" 'shared project synchronization delegated to primary firstmate' \
-    "shared secondmate did not delegate canonical checkout sync"
-  pass "fleet sync is registry-driven and shared secondmates never mutate the primary-owned catalog"
-}
+    "container secondmate did not delegate canonical repo sync"
 
-test_projects_root_inheritance_and_route_lookup() {
-  local inherited out rc
-  inherited="$TMP_ROOT/inherited-config"
-  mkdir -p "$inherited"
-  FM_INHERITABLE_CONFIG=projects-root FM_HOME="$SHARED_HOME" bash -c \
-    '. "$1/bin/fm-config-inherit-lib.sh"; propagate_inheritable_config "$2/config" "$3"' \
-    bash "$ROOT" "$SHARED_HOME" "$inherited" || fail "projects-root inheritance failed"
-  assert_grep "$SHARED_ROOT" "$inherited/projects-root" "projects-root was not inherited"
+  out=$(cd "$ALPHA_CONTAINER" && FM_HOME="$MAIN_HOME" "$ROOT/bin/fm-project-route.sh") \
+    || fail "route lookup from non-git project container failed"
+  assert_contains "$out" 'project=alpha' "container route did not identify alpha"
+  assert_contains "$out" 'route=alpha-sm' "container route did not identify the secondmate"
+  assert_contains "$out" "home=$ALPHA_HOME" "container route omitted the colocated home"
 
-  out=$(FM_HOME="$SHARED_HOME" "$ROOT/bin/fm-project-route.sh" alpha) || fail "single route lookup failed"
-  assert_contains "$out" 'route=shared' "single route did not identify the secondmate"
-  assert_contains "$out" "home=$SHARED_SUB" "single route omitted the secondmate home"
-  assert_contains "$out" 'fm-send.sh' "single route omitted the supported send command"
+  out=$(cd "$ALPHA_API" && FM_HOME="$MAIN_HOME" "$ROOT/bin/fm-project-route.sh") \
+    || fail "route lookup from a registered repo failed"
+  assert_contains "$out" 'project=alpha' "repo route did not map back to its container project"
 
-  printf '%s\n' "- other - other scope (home: $TMP_ROOT/other-home; scope: alternate alpha work; projects: alpha; added 2026-07-13)" \
-    >> "$SHARED_HOME/data/secondmates.md"
   set +e
-  out=$(FM_HOME="$SHARED_HOME" "$ROOT/bin/fm-project-route.sh" alpha 2>"$TMP_ROOT/route.err")
+  out=$(FM_HOME="$MAIN_HOME" "$ROOT/bin/fm-project-route.sh" alpha/missing 2>"$TMP_ROOT/missing.err")
   rc=$?
   set -e
-  [ "$rc" -eq 3 ] || fail "ambiguous route did not return exit 3"
-  assert_contains "$out" 'route=ambiguous' "ambiguous route was not labeled"
-  assert_contains "$out" 'candidate=shared' "ambiguous route omitted the first candidate"
-  assert_contains "$out" 'candidate=other' "ambiguous route omitted the second candidate"
-  assert_grep 'without choosing' "$TMP_ROOT/route.err" "ambiguous route did not refuse to guess"
-  pass "projects-root inherits and direct project sessions get an explicit, ambiguity-safe route"
+  [ "$rc" -eq 2 ] || fail "unregistered repo selector returned $rc instead of 2: $out"
+  assert_grep 'no registered project context' "$TMP_ROOT/missing.err" \
+    "unregistered repo selector was routed by project-name prefix"
+
+  set +e
+  out=$(cd "$ORCA_BASE/workspaces" && FM_HOME="$MAIN_HOME" "$ROOT/bin/fm-project-route.sh" 2>"$TMP_ROOT/workspaces.err")
+  rc=$?
+  set -e
+  [ "$rc" -eq 2 ] || fail "reserved workspaces context returned $rc instead of 2: $out"
+  assert_grep 'no registered project context' "$TMP_ROOT/workspaces.err" "workspaces refusal was not explicit"
+  pass "sync and routing follow the registry from container or repo context"
 }
 
-test_resolver_precedence_and_safety
-test_shared_seed_is_reference_only_and_transactional
-test_registry_sync_and_secondmate_delegation
-test_projects_root_inheritance_and_route_lookup
+test_resolver_precedence_and_fail_closed_config
+test_registry_drives_containers_and_repo_selection
+test_legacy_single_repo_compatibility
+test_container_seed_is_reference_only_and_colocated
+test_registry_sync_and_route_from_container_context

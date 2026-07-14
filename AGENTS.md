@@ -23,7 +23,7 @@ It uses the same spawn, brief, status, watcher, steer, teardown, and recovery li
 Hard rules, in priority order:
 
 1. **Never write to a project.**
-   You must not edit, commit to, or run state-changing commands in anything under the resolved project catalog or in any worktree.
+   You must not edit, commit to, or run state-changing commands in any registered canonical project repo or in any worktree.
    You read projects to understand them; crewmates change them.
    Six sanctioned write exceptions are indexed here; their procedures live where they are used: tool-driven project initialization (section 6), fleet sync via `bin/fm-fleet-sync.sh` (sections 3, 7, and 8), local-HEAD secondmate sync via `bin/fm-bootstrap.sh` and `bin/fm-spawn.sh` (sections 3 and 7), inheritable config propagation via `bin/fm-config-push.sh` and the bootstrap/spawn convergence paths (sections 3 and 4), self-update via `/updatefirstmate` and `bin/fm-update.sh` (section 12), and approved `local-only` merge via `bin/fm-merge-local.sh` (section 7).
    All are fast-forward operations, guarded gitignored-config propagation, or guarded local merges that never force, stash, or discard unlanded work.
@@ -78,7 +78,7 @@ config/crew-harness  crewmate harness override; LOCAL, gitignored; absent or "de
 config/crew-dispatch.json  optional crewmate dispatch profiles; LOCAL, gitignored; firstmate-maintained but human-editable natural-language rules that choose a per-task harness/model/effort profile (section 4). Inherited by secondmate homes
 config/secondmate-harness  harness the PRIMARY uses to launch SECONDMATE agents, optionally followed by a model and effort token on the same line ("<harness> [<model>] [<effort>]"; section 4); LOCAL, gitignored; absent or "default" harness falls back to config/crew-harness then firstmate's own. The primary's own setting; NOT inherited into secondmate homes (secondmates do not spawn secondmates)
 config/backlog-backend  backlog backend override; LOCAL, gitignored; absent or "tasks-axi" = default tasks-axi backend, "manual" = force routine backlog updates to hand-editing; inherited by secondmate homes (section 10)
-config/projects-root  optional absolute flat project-catalog root; LOCAL, gitignored, inherited by secondmate homes; absent preserves `$FM_HOME/projects` (section 6; docs/configuration.md)
+config/projects-root  optional absolute project-container base; LOCAL, gitignored, inherited by secondmate homes; absent preserves `$FM_HOME/projects` (section 6; docs/configuration.md)
 config/backend  runtime session-provider backend override for new tasks; LOCAL, gitignored; absent = falls through to runtime auto-detection (the runtime firstmate itself is executing inside), then tmux; tmux is the verified reference backend (docs/tmux-backend.md), while herdr, zellij, orca, and cmux are experimental spawn backends (docs/herdr-backend.md, docs/zellij-backend.md, docs/orca-backend.md, docs/cmux-backend.md) - herdr and cmux can also be selected by runtime auto-detection, zellij and orca never are (always explicit), and codex-app is not accepted; see docs/codex-app-backend.md; not inherited into secondmate homes
 config/cmux-socket-password  optional cmux control-socket password; LOCAL, gitignored; read fresh on every cmux CLI call and passed through without ever overriding an operator's own ambient CMUX_SOCKET_PASSWORD when absent (docs/cmux-backend.md "Setup")
 config/wedge-alarm  optional away-mode wedge-alarm active-alert directives; LOCAL, gitignored; absent means auto (macOS Notification Center when available); see docs/wedge-alarm.md
@@ -132,7 +132,7 @@ It composes today's `fm-lock.sh`, `fm-bootstrap.sh`, and `fm-wake-drain.sh` - ca
 3. **Wake queue** - when locked, drains the durable wake queue and prints the records prominently as this turn's first work queue, exactly as `bin/fm-wake-drain.sh` did before; a lapsed watcher chain still surfaces here via the same guard banner.
    When the lock could not be acquired, the queue is left untouched because another session owns it, and the guard's tangle/watcher-liveness alarms still print in read-only advisory mode without drain, supervision repair, or checkout repair commands.
 4. **Context digest** - the full contents of `data/projects.md`, `data/secondmates.md`, `data/captain.md`, and `data/learnings.md`, each clearly delimited.
-   A file that does not exist prints an explicit `ABSENT` marker, never confused with an empty-but-present file: absence is meaningful (`captain.md` absent means use this template's defaults, `projects.md` absent means rebuild it from the legacy local clones or explicitly reconstruct a configured shared catalog registry, etc.).
+   A file that does not exist prints an explicit `ABSENT` marker, never confused with an empty-but-present file: absence is meaningful (`captain.md` absent means use this template's defaults, `projects.md` absent means rebuild it from the legacy local clones or explicitly reconstruct the configured project-container registry, etc.).
 5. **Fleet-state digest** - the full `data/backlog.md`; every `state/<id>.meta`; a bounded tail of each task's `state/<id>.status` (labeled as wake-EVENT history, not current state, with the full log path printed for a deeper read); the `state/.afk` flag; and one cheap alive/dead read of each task's recorded backend endpoint.
    That liveness line is a fast presence check only, not a full state read - when you need a crew's actual current state (a run-step, not just "is the pane there"), read it with `bin/fm-crew-state.sh <id>` as before; the digest deliberately skips that deeper, slower read for every task so it stays fast and bounded.
 6. **Supervision operating instructions and next step** - after the wake queue and before context, the digest emits exactly one operating block for the detected primary harness.
@@ -159,7 +159,7 @@ Otherwise it prints one line per problem or capability fact; load `bootstrap-dia
 
 The digest's context section already contains `data/projects.md`, the fleet registry of what each project is; `data/secondmates.md`, the registered secondmate routing table used to route work by scope (section 7); `data/captain.md`, this captain's curated preferences and working style; and `data/learnings.md`, fleet-local operational facts and gotchas this home has captured.
 Treat any harness memory of captain preferences as a recall cache only; `data/captain.md` is the canonical, harness-portable home.
-If the digest reported `data/projects.md` as `ABSENT` or disagreeing with the resolved project catalog, rebuild it from the intended registered projects (a README skim per project is enough) before taking on work; never infer entries by globbing a configured shared root.
+If the digest reported `data/projects.md` as `ABSENT` or disagreeing with the intended canonical repos, rebuild it from the intended projects (a README skim per repo is enough) before taking on work; never infer entries by globbing a configured project-container base.
 An `ABSENT` `data/captain.md` or `data/secondmates.md` or `data/learnings.md` means exactly what section 2 says it means (template defaults, no registered secondmates, nothing captured yet) - not a problem to fix.
 
 Do not dispatch any work until the tools that work needs are present and GitHub auth is good.
@@ -262,17 +262,20 @@ All truth lives in each task's backend live-task inventory (tmux by hard default
 
 ## 6. Project management
 
-All projects live flat under the resolved project catalog, which defaults to `projects/`; load `secondmate-provisioning` before giving a secondmate shared external project access.
+Without `config/projects-root`, projects retain the legacy single-repo layout under `$FM_HOME/projects`; with it, registered projects are non-git containers with one or more explicit sibling repo names, as owned by `docs/configuration.md`.
+Load `secondmate-provisioning` before giving a secondmate shared container-repo access.
 
 `data/projects.md` is firstmate's thin navigation registry.
 Every project in the fleet has one line:
 
 ```markdown
 - <name> [<mode>] - <one-line description> (added <date>)
+- <name> [<mode>] - <one-line description> (repos: <repo>[, <repo>...]; added <date>)
 ```
 
-The registry line records the project name, delivery mode, optional `+yolo` posture, and one-line description.
-Add the line when you clone or create a project, keep the description useful for identifying the project, and drop the line if a project is ever removed from the resolved catalog.
+The first form is the legacy single-repo entry; the second is required by configured project-container mode.
+The registry line records the project name, delivery mode, optional `+yolo` posture, one-line description, and explicit repo names when container mode is active.
+Add or update the line when canonical repo access changes, keep the description useful for identifying the project, and drop the line if a project is removed.
 Do not turn the registry into a knowledge dump.
 Durable descriptive detail belongs in the project's own `AGENTS.md`.
 
@@ -414,12 +417,13 @@ Write the brief per section 11.
 Load `harness-adapters` before spawning or recovering any direct report so trust dialogs, verified adapters, and harness-specific behavior are handled correctly.
 
 ```sh
-bin/fm-spawn.sh <id> projects/<repo>             # uses the active crewmate harness only when no crew-dispatch.json is active
-bin/fm-spawn.sh <id> projects/<repo> --harness codex --model gpt-5.5 --effort high   # explicit profile axes
-bin/fm-spawn.sh <id> projects/<repo> --backend <tmux|herdr|zellij|orca|cmux>   # explicit runtime backend (docs/configuration.md "Runtime backend")
-bin/fm-spawn.sh <id> projects/<repo> --scout     # scout task; records kind=scout in meta
+bin/fm-spawn.sh <id> <project>                   # bare name for a registered single-repo project
+bin/fm-spawn.sh <id> <project>/<repo>            # explicit repo in a multi-repo project container
+bin/fm-spawn.sh <id> <project>/<repo> --harness codex --model gpt-5.5 --effort high   # explicit profile axes
+bin/fm-spawn.sh <id> <project>/<repo> --backend <tmux|herdr|zellij|orca|cmux>   # explicit runtime backend (docs/configuration.md "Runtime backend")
+bin/fm-spawn.sh <id> <project>/<repo> --scout    # scout task; records kind=scout in meta
 bin/fm-spawn.sh <id> [<firstmate-home>] --secondmate   # launch or recover a persistent secondmate in its home
-bin/fm-spawn.sh <id1>=projects/<repo1> <id2>=projects/<repo2> [--scout]   # batch: one call, several tasks
+bin/fm-spawn.sh <id1>=<project1>/<repo1> <id2>=<project2>/<repo2> [--scout]   # batch: one call, several tasks
 ```
 
 Batch dispatch spawns each `id=repo` pair through the same single-task path, with shared `--scout`, `--harness`, `--model`, `--effort`, and `--backend` flags applying to all; one failed pair does not stop the rest, and the batch exits non-zero.

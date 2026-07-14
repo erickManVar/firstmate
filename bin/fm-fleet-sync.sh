@@ -19,14 +19,10 @@
 # killed mid-write - e.g. a timed-out bootstrap sync or a teardown process kill),
 # it is retried with a bounded wait and removed only when provably stale; see
 # fetch_with_packed_refs_lock_guard and the FM_FLEET_SYNC_PACKED_REFS_LOCK_* knobs.
-# Usage: fm-fleet-sync.sh [<project-dir-or-name>]
+# Usage: fm-fleet-sync.sh [<project-dir-or-selector>]
 # The single-project form accepts either a path (absolute, or relative to the
-# caller's cwd) or a bare "<name>"/"projects/<name>" form, resolved through
-# bin/fm-projects-lib.sh.
-# Bare names and "projects/<name>" forms prefer this home's projects dir before
-# falling back to an explicit path. Example: from anywhere,
-# `fm-fleet-sync.sh dotfiles-private` syncs just that one clone, same as
-# passing its full projects/dotfiles-private path.
+# caller's cwd), a bare single-repo project name, or `<project>/<repo>` for a
+# multi-repo container, resolved through bin/fm-projects-lib.sh.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -89,32 +85,11 @@ project_label() {
 # sync_project's existing "not a directory" skip.
 resolve_project_arg() {
   local arg=$1 candidate
-  case "$arg" in
-    projects/*)
-      candidate=$(fm_project_path "${arg#projects/}") || return 1
-      if [ -d "$candidate" ]; then
-        printf '%s\n' "$candidate"
-        return 0
-      fi
-      ;;
-    */*)
-      if [ -d "$arg" ]; then
-        printf '%s\n' "$arg"
-        return 0
-      fi
-      ;;
-    *)
-      candidate=$(fm_project_path "$arg") || return 1
-      if [ -d "$candidate" ]; then
-        printf '%s\n' "$candidate"
-        return 0
-      fi
-      if [ -d "$arg" ]; then
-        printf '%s\n' "$arg"
-        return 0
-      fi
-      ;;
-  esac
+  candidate=$(fm_project_resolve_arg "$arg") || return 1
+  if [ -d "$candidate" ]; then
+    printf '%s\n' "$candidate"
+    return 0
+  fi
   printf '%s\n' "$arg"
 }
 
@@ -312,7 +287,7 @@ sync_project() {
     echo "$label: skipped: not a git repo"
     return 0
   fi
-  mode_line=$("$FM_ROOT/bin/fm-project-mode.sh" "$label" 2>/dev/null || echo "no-mistakes off")
+  mode_line=$("$FM_ROOT/bin/fm-project-mode.sh" "$PROJ" 2>/dev/null || echo "no-mistakes off")
   mode=${mode_line%% *}
   if [ "$mode" = "local-only" ]; then
     echo "$label: skipped: local-only project"
@@ -433,10 +408,17 @@ if [ $# -eq 1 ]; then
   exit 0
 fi
 
-[ -d "$PROJECTS" ] || exit 0
+names=$(fm_project_registry_names) || exit 1
 while IFS= read -r name; do
   [ -n "$name" ] || continue
-  proj=$(fm_project_path "$name") || continue
-  [ -d "$proj" ] || continue
-  sync_project "$proj"
-done < <(fm_project_registry_names)
+  repos=$(fm_project_repo_paths "$name") || exit 1
+  while IFS= read -r proj; do
+    [ -n "$proj" ] || continue
+    [ -d "$proj" ] || continue
+    sync_project "$proj"
+  done <<EOF
+$repos
+EOF
+done <<EOF
+$names
+EOF

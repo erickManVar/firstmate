@@ -77,19 +77,25 @@ test_projects_path_scoping() {
     [ -n "$label" ] || continue
     home="$TMP_ROOT/$id home"
     projects="$TMP_ROOT/$id projects"
-    mkdir -p "$home/data" "$home/config" "$projects/alpha"
-    printf '%s\n' '- alpha [direct-PR] - alpha fixture (added 2026-07-13)' > "$home/data/projects.md"
+    mkdir -p "$home/data" "$home/config" "$projects"
     if [ "$source" = override ]; then
+      mkdir -p "$projects/alpha"
+      fm_git_init_commit "$projects/alpha/repo"
+      printf '%s\n' '- alpha [direct-PR] - alpha fixture (repos: repo; added 2026-07-13)' > "$home/data/projects.md"
       out=$(FM_ROOT_OVERRIDE='' FM_STATE_OVERRIDE='' FM_DATA_OVERRIDE='' FM_CONFIG_OVERRIDE='' \
         FM_HOME="$home" FM_PROJECTS_OVERRIDE="$projects" FM_SPAWN_NO_GUARD=1 \
         "$SPAWN" "$id" "$arg" codex 2>&1)
     elif [ "$source" = config ]; then
+      mkdir -p "$projects/alpha"
+      fm_git_init_commit "$projects/alpha/repo"
+      printf '%s\n' '- alpha [direct-PR] - alpha fixture (repos: repo; added 2026-07-13)' > "$home/data/projects.md"
       printf '%s\n' "$projects" > "$home/config/projects-root"
       out=$(FM_ROOT_OVERRIDE='' FM_STATE_OVERRIDE='' FM_DATA_OVERRIDE='' FM_PROJECTS_OVERRIDE='' FM_CONFIG_OVERRIDE='' \
         FM_HOME="$home" FM_SPAWN_NO_GUARD=1 \
         "$SPAWN" "$id" "$arg" codex 2>&1)
     else
       mkdir -p "$home/projects/alpha"
+      printf '%s\n' '- alpha [direct-PR] - alpha fixture (added 2026-07-13)' > "$home/data/projects.md"
       out=$(FM_ROOT_OVERRIDE='' FM_STATE_OVERRIDE='' FM_DATA_OVERRIDE='' FM_PROJECTS_OVERRIDE='' FM_CONFIG_OVERRIDE='' \
         FM_HOME="$home" FM_SPAWN_NO_GUARD=1 \
         "$SPAWN" "$id" "$arg" codex 2>&1)
@@ -107,7 +113,7 @@ FM_PROJECTS_OVERRIDE scopes projects/|override|projects/alpha|nope-override-z8
 config/projects-root scopes projects/|config|projects/alpha|nope-config-z9
 config/projects-root resolves a bare registered name|config|alpha|nope-config-bare-y1
 ROWS
-  pass "project paths resolve through legacy, override, and configured shared catalogs"
+  pass "project paths resolve through legacy and configured or overridden project containers"
 }
 
 test_batch_dispatches_every_pair

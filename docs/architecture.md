@@ -120,7 +120,7 @@ That keeps spawn launch compatible across claude, codex, grok, pi, and opencode 
 ## Optional secondmates
 
 `data/secondmates.md` records persistent domain supervisors with natural-language scopes, project access lists, and home paths.
-`fm-home-seed.sh` provisions the isolated home, gives it legacy local clones or inherited access to a configured shared catalog, copies the charter to `data/charter.md`, and `fm-spawn.sh --secondmate` launches it through the same session-provider and status-file path as any direct report.
+`fm-home-seed.sh` provisions the isolated home, gives it legacy local clones or inherited access to explicitly registered container repos, copies the charter to `data/charter.md`, and `fm-spawn.sh --secondmate` launches it through the same session-provider and status-file path as any direct report.
 For a domain whose subject is the firstmate repo itself, a deliberate `--no-projects` seed creates a project-less home whose crews take pooled worktrees of that repo instead of separate clones.
 The signal cannot be mixed with project names or omitted accidentally, and a populated home cannot be converted in place; the full seed contract is in [configuration.md](configuration.md#secondmate-routes-datasecondmatesmd).
 On the herdr backend, a secondmate launch lands in that secondmate home's labeled workspace, and crewmates spawned from that home land in the same workspace.
@@ -155,6 +155,8 @@ The `data/secondmates.md` line schema and the secondmate environment variables a
 ## Project modes are explicit
 
 `data/projects.md` records each project's delivery mode and optional `+yolo` autonomy flag.
+With `config/projects-root`, the same line explicitly lists one or more sibling repo names inside a same-named non-git project container; without it, the legacy single repo remains `$FM_HOME/projects/<name>`.
+Container and repo resolution is registry-only, while Orca's `workspaces` directory and colocated `.secondmate` homes are reserved operational paths rather than discoverable repos.
 `no-mistakes` projects run the full validation pipeline, `direct-PR` projects open PRs without that pipeline, and `local-only` projects stay local until firstmate performs an approved fast-forward merge.
 Review diffs go through `bin/fm-review-diff.sh`, which refreshes the authoritative base and, when task meta records `pr=`, compares against the reachable recorded `pr_head=` or a freshly fetched `refs/pull/<n>/head` before falling back to the local branch with a warning.
 For target project repos shipped through their own no-mistakes pipeline, commits under `.no-mistakes/evidence/` are the pipeline's PR-viewable validation evidence and are expected to stay in the crew branch until the evidence-hosting design changes.

@@ -101,17 +101,25 @@ PROJECTS=$(fm_projects_root) || exit 1
 . "$SCRIPT_DIR/fm-backend.sh"
 
 fleet_sync_origin_backed_project_count() {
-  local count proj name
+  local count proj name names repos
   count=0
   [ -d "$PROJECTS" ] || { echo 0; return 0; }
+  names=$(fm_project_registry_names) || return 1
   while IFS= read -r name; do
     [ -n "$name" ] || continue
-    proj=$(fm_project_path "$name") || continue
-    [ -d "$proj" ] || continue
-    git -C "$proj" rev-parse --git-dir >/dev/null 2>&1 || continue
-    git -C "$proj" remote get-url origin >/dev/null 2>&1 || continue
-    count=$((count + 1))
-  done < <(fm_project_registry_names)
+    repos=$(fm_project_repo_paths "$name") || return 1
+    while IFS= read -r proj; do
+      [ -n "$proj" ] || continue
+      [ -d "$proj" ] || continue
+      git -C "$proj" rev-parse --git-dir >/dev/null 2>&1 || continue
+      git -C "$proj" remote get-url origin >/dev/null 2>&1 || continue
+      count=$((count + 1))
+    done <<EOF
+$repos
+EOF
+  done <<EOF
+$names
+EOF
   echo "$count"
 }
 

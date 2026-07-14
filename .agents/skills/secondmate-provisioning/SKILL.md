@@ -64,10 +64,13 @@ It also writes the required `.fm-secondmate-home` identity marker, which is giti
 
 Project access has two backward-compatible seed modes, selected by `bin/fm-projects-lib.sh`.
 Without `config/projects-root`, the legacy mode clones each listed project into the secondmate home's internal `projects/` directory and initializes only newly cloned `no-mistakes` repositories.
-With `config/projects-root`, shared mode inherits that absolute catalog path into the home, copies the selected registry lines, validates every external repository and origin, and requires each `no-mistakes` repository to be initialized already.
-Shared mode keeps the internal `projects/` directory real and empty, never replaces it with a symlink, and never clones, initializes, fleet-syncs, deletes, or records rollback ownership over an external checkout.
-The primary firstmate owns safe fleet-sync mutation of a shared catalog; a marked secondmate may resolve it and spawn isolated task worktrees but delegates catalog sync to the primary.
-`FM_PROJECTS_OVERRIDE` remains the highest-precedence one-shot resolver input, but shared seeding requires the durable `config/projects-root` file because environment overrides are cleared on secondmate launch.
+With `config/projects-root`, shared mode inherits that absolute project-container base into the home and copies the selected registry lines.
+Each selected project line explicitly names one or more sibling repos in its same-named non-git container, and seed validates every listed repo and origin while requiring every repo in a `no-mistakes` project to be initialized already.
+The exact registry and reserved-path contract is owned by `docs/configuration.md` ("Project containers").
+An explicit seed home may be the container's real `.secondmate/` sibling directory; `ensure_home` clones the firstmate checkout there and normal home validation keeps it isolated from every canonical repo.
+Shared mode keeps the internal `projects/` directory real and empty, never replaces it with a symlink, and never clones, initializes, fleet-syncs, deletes, or records rollback ownership over any registered repo.
+The primary firstmate owns safe fleet-sync mutation of shared container repos; a marked secondmate may resolve them and spawn isolated task worktrees but delegates canonical sync to the primary.
+`FM_PROJECTS_OVERRIDE` remains the highest-precedence one-shot project-base input, but shared seeding requires the durable `config/projects-root` file because environment overrides are cleared on secondmate launch.
 
 `config/secondmate-harness` may also pin a concrete model and effort for the secondmate agent, in the SAME file rather than a new one: the format is a single whitespace-separated line `<harness> [<model>] [<effort>]`, with only the first non-empty, non-comment line parsed.
 A bare `<harness>` (today's format, e.g. `claude`) behaves exactly as before - harness only, no model/effort flag - so this is fully backward-compatible.
@@ -82,7 +85,7 @@ This section is the single owner of the secondmate sync and inheritable-config p
 Before launch, `fm-spawn.sh --secondmate` locally fast-forwards the home to the primary firstmate checkout's current default-branch commit when it is safe; dirty, diverged, or in-flight homes launch unchanged with a warning.
 The locked session-start bootstrap sweep runs the same guarded fast-forward for every live secondmate home, discovered from `state/<id>.meta` records with `kind=secondmate` (`data/secondmates.md` only backfills `home=` for older records).
 That no-fetch path is a purely local fast-forward of tracked files, never an origin fetch, and it never touches the gitignored operational dirs, so a secondmate's backlog, projects, and in-flight work are never disturbed; a linked worktree advances immediately, while a standalone clone that lacks the target receives firstmate updates through `/updatefirstmate`'s origin refresh.
-The same launch and the same locked bootstrap sweep also propagate the primary's declared inheritable local config, currently `config/crew-dispatch.json`, `config/crew-harness`, `config/backlog-backend`, and `config/projects-root`, into the secondmate home's `config/`.
+The same launch and the same locked bootstrap sweep also propagate the primary's declared inheritable local config, currently `config/crew-dispatch.json`, `config/crew-harness`, `config/backlog-backend`, and the project-container base in `config/projects-root`, into the secondmate home's `config/`.
 Because `config/` is gitignored, that propagation is a separate, primary-authoritative copy independent of the tracked-files fast-forward: it re-converges every live home whether or not its tracked files advanced, and it touches only the declared items.
 Inheritance copies the literal `config/crew-harness` file, so a secondmate's own crewmates use the primary's crewmate harness only when it names a concrete adapter such as `codex`; an unset or `default` value has nothing concrete to inherit, and the secondmate's own crewmates fall back to the secondmate's own or detected harness instead.
 `config/secondmate-harness` is not inherited because it is only the primary's knob for launching secondmate agents.
@@ -96,11 +99,12 @@ Run `bin/fm-home-seed.sh validate` when checking registry integrity; it refuses 
 
 Seeding is transactional.
 If validation, cloning, no-mistakes initialization, inheritance, or registry update fails, generated briefs, new homes, owned project clones, inherited config, and registry edits are rolled back.
-An external shared checkout is never a rollback target.
+An external registered container repo is never a rollback target.
 
 Secondmate project access lists may include `no-mistakes` and `direct-PR` projects only.
 `local-only` projects stay with the main firstmate.
-For `no-mistakes` projects, seeding initializes only projects newly cloned into a secondmate home and refuses to mutate a preexisting clone that is not already initialized.
+For legacy `no-mistakes` projects, seeding initializes only projects newly cloned into a secondmate home and refuses to mutate a preexisting clone that is not already initialized.
+For shared `no-mistakes` projects, every explicitly registered repo must already be initialized and seed never initializes one.
 
 ## Backlog handoff
 

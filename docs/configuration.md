@@ -116,7 +116,8 @@ The lease is held under the secondmate id until explicit retirement or seed roll
 Teardown of a leased home fails closed if `treehouse return` cannot release the lease; plain-clone homes with no treehouse pool slot are removed directly.
 Secondmate routes cover `no-mistakes` and `direct-PR` projects; `local-only` projects remain main-firstmate work.
 For `no-mistakes` projects, seeding initializes only projects newly cloned into a secondmate home and refuses to mutate a preexisting clone that is not already initialized.
-When `config/projects-root` selects a shared catalog, seeding instead validates each external repository and its origin, requires `no-mistakes` projects to be initialized already, inherits the catalog setting, and creates no project clone.
+When `config/projects-root` selects project-container mode, seeding instead validates every explicitly registered sibling repository and its origin, requires every repo in a `no-mistakes` project to be initialized already, inherits the container-base setting, and creates no project clone.
+An explicit home such as `<container>/.secondmate` is cloned as a real firstmate home beside those repos; it is never a symlink or a repo entry.
 Shared seeding and rollback never initialize, synchronize, delete, or otherwise mutate the external checkout.
 After creating a secondmate, move existing main-backlog queued items that you have judged in-scope with `fm-backlog-handoff.sh <secondmate-id> <item-key>...`; it is idempotent and refuses In flight, Done, or non-secondmate homes.
 Set `FM_SECONDMATE_CHARTER` to seed from inline charter text when no filled charter brief exists; set `FM_SECONDMATE_SCOPE` when the routing scope should differ from the charter text.
@@ -141,17 +142,43 @@ The full zellij home label also includes a short hash of the resolved `FM_ROOT` 
 For the cmux backend, `FM_CONFIG_OVERRIDE` overrides where `config/cmux-socket-password` is read from, while `FM_HOME` determines the default config path and readable home prefix embedded in workspace titles.
 The full cmux home label also includes a short hash of the resolved `FM_ROOT` path, and there is no per-home container split.
 
-### Project catalog root (config/projects-root)
+### Project containers (config/projects-root and data/projects.md)
 
-`config/projects-root` is optional, local, gitignored, and contains exactly one non-empty, non-comment absolute path to an existing flat project catalog.
-Project-root precedence is non-empty `FM_PROJECTS_OVERRIDE`, then `$FM_CONFIG_OVERRIDE/projects-root` or `$FM_HOME/config/projects-root`, then the legacy `$FM_HOME/projects` default.
-Each safe project name in `data/projects.md` maps to the same-named direct, non-symlink child of that resolved root.
-Configured shared roots are enumerated only through `data/projects.md`, so unrelated siblings such as `firstmate` and `.secondmates` are never treated as projects.
-Legacy homes with no registry retain the existing clone-directory discovery path so session start can request that the registry be rebuilt.
-Secondmate homes inherit `projects-root`, retain a real internal `projects/` operational directory, and never replace it with a symlink.
-The primary firstmate owns fleet-sync mutation of a shared catalog; a marked secondmate delegates shared-root synchronization and changes projects only through isolated task worktrees.
-Existing homes without the file remain byte-compatible with local cloning under `$FM_HOME/projects`.
-`bin/fm-projects-lib.sh` owns path validation and resolution mechanics.
+`config/projects-root` is optional, local, gitignored, and contains exactly one non-empty, non-comment absolute path to an existing project-container base.
+Project-base precedence is non-empty `FM_PROJECTS_OVERRIDE`, then `$FM_CONFIG_OVERRIDE/projects-root` or `$FM_HOME/config/projects-root`, then the legacy `$FM_HOME/projects` default.
+An invalid, unreadable, or symlinked config fails closed and never falls back to a mutation-capable legacy directory.
+
+When the config or override is present, every project line must use this form:
+
+```markdown
+- <project> [<mode> <optional +yolo>] - <description> (repos: <repo>[, <repo>...]; added <date>)
+```
+
+The project container is the same-named direct child `<projects-root>/<project>` and must be a real non-git directory.
+Every comma-separated repo name is an explicit direct, non-symlink child of that container and must be a Git worktree root.
+Repo order is preserved, duplicate repo names are invalid, and a bare project selector works only when exactly one repo is registered; use `<project>/<repo>` for a multi-repo container.
+The resolver never scans the configured base or a container to invent entries.
+Dot-prefixed names cannot be projects or repos, and `firstmate`, `workspaces`, `projects`, `state`, `data`, and `config` are reserved container names.
+These rules exclude Orca's task worktrees and the colocated `.secondmate` operational home by construction.
+
+For example, a primary home at `/Users/erickmanrique/orca/firstmate` can contain `/Users/erickmanrique/orca` in `config/projects-root` and register:
+
+```markdown
+- ayjestudios [no-mistakes] - Ayje Studios products (repos: frontend, backend, backoffice; added 2026-07-13)
+```
+
+That line resolves only `/Users/erickmanrique/orca/ayjestudios/frontend`, `/Users/erickmanrique/orca/ayjestudios/backend`, and `/Users/erickmanrique/orca/ayjestudios/backoffice`.
+`/Users/erickmanrique/orca/workspaces` remains reserved for Orca-managed task worktrees and is never canonical project input.
+`/Users/erickmanrique/orca/base-commerce` was observed on 2026-07-13 as a direct Git checkout, not a non-git container; this support change treats it only as a read-only migration example and does not move or rewrite it.
+
+Secondmate homes inherit `projects-root`, copy only their selected registry lines, retain a real empty internal `projects/` directory, and may live at `<container>/.secondmate` beside the registered repos.
+The primary firstmate owns fleet-sync mutation of container repos; a marked secondmate delegates shared synchronization and changes repos only through isolated task worktrees.
+From an Orca window opened at a registered container, repo, or repo subdirectory, `bin/fm-project-route.sh` maps the physical path back through `data/projects.md` and then reports the matching `data/secondmates.md` route and supported `fm-send` command.
+The helper refuses unregistered paths and ambiguous non-exclusive secondmate routes instead of guessing.
+
+When neither config nor override is present, the legacy line `- <name> [<mode>] - <description> (added <date>)` continues to map to the single repo `$FM_HOME/projects/<name>`.
+Legacy homes with no registry retain existing clone-directory discovery so session start can request that the registry be rebuilt.
+`bin/fm-projects-lib.sh` owns registry parsing, reserved-name checks, path validation, and selector resolution.
 
 ## Harness support
 
