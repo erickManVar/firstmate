@@ -31,7 +31,14 @@ REG="$DATA/projects.md"
 INPUT=${1:?usage: fm-project-mode.sh <project-name-or-selector>}
 # shellcheck source=bin/fm-projects-lib.sh
 . "$SCRIPT_DIR/fm-projects-lib.sh"
-NAME=$(fm_project_name_from_arg "$INPUT" 2>/dev/null || basename "$INPUT")
+if NAME=$(fm_project_name_from_arg "$INPUT" 2>/dev/null); then
+  :
+elif [ "$(fm_projects_mode)" = shared-external ]; then
+  echo "error: project selector is not registered in shared mode: $INPUT" >&2
+  exit 1
+else
+  NAME=$(basename "$INPUT")
+fi
 
 if [ ! -f "$REG" ]; then
   echo "warn: no registry at $REG; defaulting $NAME to no-mistakes off" >&2

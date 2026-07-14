@@ -404,7 +404,10 @@ sync_project() {
 }
 
 if [ $# -eq 1 ]; then
-  sync_project "$(resolve_project_arg "$1")"
+  if ! resolved_project=$(resolve_project_arg "$1"); then
+    exit 1
+  fi
+  sync_project "$resolved_project"
   exit 0
 fi
 

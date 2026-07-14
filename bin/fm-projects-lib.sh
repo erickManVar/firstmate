@@ -421,7 +421,7 @@ EOF
 }
 
 fm_project_resolve_arg() {
-  local arg=$1 selector project repo
+  local arg=$1 selector project repo path normalized container repos names
   selector=$arg
   case "$selector" in
     projects/*) selector=${selector#projects/} ;;
@@ -440,6 +440,34 @@ fm_project_resolve_arg() {
         return
         ;;
     esac
+  fi
+  if [ "$(fm_projects_mode)" = shared-external ]; then
+    normalized=$(fm_projects_normalize_path "$arg") || return
+    names=$(fm_project_registry_names) || return
+    while IFS= read -r project; do
+      [ -n "$project" ] || continue
+      container=$(fm_project_container_path "$project") || return
+      if [ "$normalized" = "$container" ]; then
+        fm_project_path "$project"
+        return
+      fi
+      repos=$(fm_project_repo_paths "$project") || return
+      while IFS= read -r path; do
+        [ -n "$path" ] || continue
+        case "$normalized" in
+          "$path"|"$path"/*)
+            printf '%s\n' "$path"
+            return
+            ;;
+        esac
+      done <<EOF
+$repos
+EOF
+    done <<EOF
+$names
+EOF
+    fm_projects_error "path or selector is not a registered project container or repo: $arg"
+    return 1
   fi
   printf '%s\n' "$arg"
 }

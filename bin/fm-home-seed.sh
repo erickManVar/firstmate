@@ -388,8 +388,31 @@ existing_ancestor_for_path() {
   printf '%s\n' "$path"
 }
 
+shared_home_is_registered_marker_match() {
+  local id=$1 home=$2 marker_id target line registered_id registered_home
+  [ -f "$home/$SUB_HOME_MARKER" ] || return 1
+  marker_id=$(cat "$home/$SUB_HOME_MARKER" 2>/dev/null || true)
+  [ "$marker_id" = "$id" ] || return 1
+  [ -f "$REG" ] || return 1
+  target=$(resolved_path "$home")
+  while IFS= read -r line; do
+    case "$line" in
+      "- "*)
+        registered_id=${line#- }
+        registered_id=${registered_id%% *}
+        [ "$registered_id" = "$id" ] || continue
+        registered_home=$(printf '%s\n' "$line" | registry_home_for_line)
+        [ -n "$registered_home" ] || return 1
+        [ "$(resolved_path "$registered_home")" = "$target" ]
+        return
+        ;;
+    esac
+  done < "$REG"
+  return 1
+}
+
 refuse_shared_home_in_reserved_or_git_worktree() {
-  local home=$1 workspaces ancestor top
+  local id=$1 home=$2 workspaces ancestor top
   [ "$PROJECTS_MODE" = shared-external ] || return 0
   workspaces=$(resolved_path "$PROJECTS/workspaces")
   if [ "$home" = "$workspaces" ] || path_is_ancestor_of "$workspaces" "$home"; then
@@ -399,6 +422,7 @@ refuse_shared_home_in_reserved_or_git_worktree() {
   ancestor=$(existing_ancestor_for_path "$home")
   top=$(git -C "$ancestor" rev-parse --show-toplevel 2>/dev/null || true)
   [ -z "$top" ] || {
+    shared_home_is_registered_marker_match "$id" "$home" && return 0
     top=$(resolved_path "$top")
     echo "error: secondmate home cannot be inside existing git worktree $top: $home" >&2
     return 1
@@ -975,7 +999,7 @@ seed_home() {
     requested_abs=$(abs_path_for_new "$requested_home")
     refuse_active_home_path "$requested_abs" || return 1
     refuse_shared_home_inside_registered_repo "$requested_abs" || return 1
-    refuse_shared_home_in_reserved_or_git_worktree "$requested_abs" || return 1
+    refuse_shared_home_in_reserved_or_git_worktree "$id" "$requested_abs" || return 1
   fi
 
   SEED_ROLLBACK_ACTIVE=1

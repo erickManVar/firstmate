@@ -148,6 +148,9 @@ test_registry_drives_containers_and_repo_selection() {
   out=$(resolver_call "$MAIN_HOME" 'fm_project_resolve_arg alpha/web') \
     || fail "alpha/web caller selector did not resolve"
   [ "$out" = "$ALPHA_WEB" ] || fail "alpha/web resolved incorrectly: $out"
+  out=$(resolver_call "$MAIN_HOME" "fm_project_resolve_arg '$ALPHA_WEB/src'") \
+    || fail "registered repo subdirectory did not resolve"
+  [ "$out" = "$ALPHA_WEB" ] || fail "registered repo subdirectory did not resolve to its repo: $out"
   if resolver_call "$MAIN_HOME" 'fm_project_path alpha' > /dev/null 2>"$err"; then
     fail "multi-repo project resolved without a repo selector"
   fi
@@ -156,6 +159,12 @@ test_registry_drives_containers_and_repo_selection() {
   mkdir -p "$ORCA_BASE/unregistered"
   make_repo "$ORCA_BASE/unregistered/repo" "$TMP_ROOT/remotes/unregistered.git"
   assert_not_contains "$names" unregistered "unregistered container was discovered"
+  if resolver_call "$MAIN_HOME" "fm_project_resolve_arg '$ORCA_BASE/unregistered/repo'" \
+      > /dev/null 2>"$err"; then
+    fail "shared resolver accepted an unregistered checkout path"
+  fi
+  assert_grep 'not a registered project container or repo' "$err" \
+    "shared resolver did not reject an unregistered checkout path"
 
   bad_home="$TMP_ROOT/reserved-home"
   bad_base="$TMP_ROOT/reserved-base"
@@ -258,6 +267,11 @@ test_container_seed_is_reference_only_and_colocated() {
   [ "$before_web" = "$(git -C "$ALPHA_WEB" status --porcelain=v1; git -C "$ALPHA_WEB" rev-parse HEAD)" ] \
     || fail "seed mutated alpha/web"
 
+  FM_HOME="$MAIN_HOME" FM_SECONDMATE_CHARTER='alpha container domain' \
+    FM_SECONDMATE_SCOPE='alpha product work' \
+    "$ROOT/bin/fm-home-seed.sh" alpha-sm "$ALPHA_HOME" alpha > /dev/null \
+    || fail "shared seed rejected its registered marker-matching secondmate home"
+
   git -C "$GAMMA_REPO" remote remove no-mistakes
   bad_home="$GAMMA_CONTAINER/.secondmate"
   err="$TMP_ROOT/unready.err"
@@ -286,7 +300,7 @@ test_legacy_seed_keeps_existing_home_placement_behavior() {
 }
 
 test_registry_sync_and_route_from_container_context() {
-  local out rc
+  local out rc err
   out=$(FM_HOME="$MAIN_HOME" FM_FLEET_PRUNE=0 "$ROOT/bin/fm-fleet-sync.sh" 2>/dev/null)
   assert_not_contains "$out" 'unregistered:' "fleet sync discovered an unregistered container"
 
@@ -303,6 +317,24 @@ test_registry_sync_and_route_from_container_context() {
   out=$(cd "$ALPHA_API" && FM_HOME="$MAIN_HOME" "$ROOT/bin/fm-project-route.sh") \
     || fail "route lookup from a registered repo failed"
   assert_contains "$out" 'project=alpha' "repo route did not map back to its container project"
+
+  err="$TMP_ROOT/unregistered-fleet-sync.err"
+  set +e
+  FM_HOME="$MAIN_HOME" FM_FLEET_PRUNE=0 "$ROOT/bin/fm-fleet-sync.sh" "$ORCA_BASE/unregistered/repo" \
+    > /dev/null 2>"$err"
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "fleet sync accepted an unregistered shared checkout path"
+  assert_grep 'not a registered project container or repo' "$err" \
+    "fleet sync did not reject an unregistered shared checkout path"
+
+  err="$TMP_ROOT/unregistered-project-mode.err"
+  if FM_HOME="$MAIN_HOME" "$ROOT/bin/fm-project-mode.sh" "$ORCA_BASE/unregistered/repo" \
+      > /dev/null 2>"$err"; then
+    fail "project mode accepted an unregistered shared checkout path"
+  fi
+  assert_grep 'project selector is not registered in shared mode' "$err" \
+    "project mode did not reject an unregistered shared checkout path"
 
   set +e
   out=$(FM_HOME="$MAIN_HOME" "$ROOT/bin/fm-project-route.sh" alpha/missing 2>"$TMP_ROOT/missing.err")
