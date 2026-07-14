@@ -102,6 +102,10 @@ route=alpha-sm
 home=$SM_HOME
 scope=alpha work"
 unset TMUX
+# Pin the launcher's own implicit backend resolution (the real fm_backend_name
+# reads FM_BACKEND, then $FM_HOME/config/backend, then auto-detection) so the
+# suite is hermetic on any dev machine; the bridge tests override per case.
+export FM_BACKEND=tmux
 
 # A genuine-looking seeded secondmate home for the identity checks.
 mkdir -p "$SM_HOME/bin" "$SM_HOME/data"
@@ -111,6 +115,8 @@ printf 'alpha-sm\n' > "$SM_HOME/.fm-secondmate-home"
 reset_state() {
   rm -f "$HOME_DIR/state"/alpha-sm.meta "$FM_FAKE_ROUTE_LOG" "$FM_FAKE_SPAWN_LOG" "$FM_FAKE_TMUX_LOG"
   rm -rf "$HOME_DIR/state/.secondmate-launch-alpha-sm.lock"
+  rm -f "$HOME_DIR/config/backend"
+  export FM_BACKEND=tmux
   : > "$FM_FAKE_ROUTE_LOG"
   : > "$FM_FAKE_SPAWN_LOG"
   : > "$FM_FAKE_TMUX_LOG"
@@ -271,6 +277,34 @@ test_spawn_refusal_surfaces() {
   pass "a backend spawn refusal surfaces as the blocker"
 }
 
+test_implicit_orca_backend_bridges_to_tmux() {
+  reset_state
+  mkdir -p "$HOME_DIR/config"
+  printf 'orca\n' > "$HOME_DIR/config/backend"
+  out=$(FM_BACKEND='' "$LAUNCHER" claude --no-attach 2>&1) || fail "config/backend=orca must bridge, not refuse: $out"
+  assert_grep "spawn:alpha-sm --secondmate --harness claude --backend tmux" "$FM_FAKE_SPAWN_LOG" "implicit orca resolution is bridged to a tmux coordinator"
+  assert_contains "$out" "cannot host a secondmate coordinator" "the bridge is announced with its reason"
+  pass "config/backend=orca bridges the coordinator launch to tmux"
+}
+
+test_implicit_cmux_backend_bridges_to_tmux() {
+  reset_state
+  mkdir -p "$HOME_DIR/config"
+  printf 'cmux\n' > "$HOME_DIR/config/backend"
+  out=$(FM_BACKEND='' "$LAUNCHER" claude --no-attach 2>&1) || fail "config/backend=cmux must bridge, not refuse: $out"
+  assert_grep "spawn:alpha-sm --secondmate --harness claude --backend tmux" "$FM_FAKE_SPAWN_LOG" "implicit cmux resolution is bridged to a tmux coordinator"
+  pass "config/backend=cmux bridges the coordinator launch to tmux"
+}
+
+test_explicit_orca_backend_still_refuses() {
+  reset_state
+  export FM_FAKE_SPAWN_FAIL=1
+  out=$("$LAUNCHER" claude --no-attach --backend orca 2>&1) && fail "explicit --backend orca must stay a fail-closed refusal"
+  assert_grep "spawn:alpha-sm --secondmate --harness claude --backend orca" "$FM_FAKE_SPAWN_LOG" "explicit orca is forwarded verbatim, never bridged"
+  assert_contains "$out" "backend refused" "fm-spawn's refusal surfaces as the blocker"
+  pass "explicit --backend orca preserves the fail-closed refusal"
+}
+
 test_unknown_harness_refused
 test_route_failure_propagates
 test_registry_validation_fails_closed
@@ -285,5 +319,8 @@ test_meta_home_disagreement_fails_closed
 test_launch_lock_serializes
 test_concurrent_homes_are_independent
 test_spawn_refusal_surfaces
+test_implicit_orca_backend_bridges_to_tmux
+test_implicit_cmux_backend_bridges_to_tmux
+test_explicit_orca_backend_still_refuses
 
 echo "fm-secondmate-launcher: all tests passed"

@@ -31,10 +31,12 @@ It routes the current directory to the project's registered secondmate and then 
 - Anything unprovable - ambiguous or unregistered paths, a malformed or foreign-marked home, duplicate or overlapping registry entries, a pane whose agent identity cannot be confirmed, or a concurrent launcher run - fails closed with the reason.
 
 An explicit harness wins for that launch; `auto` defers to the documented secondmate chain (`config/secondmate-harness` -> `config/crew-harness` -> the primary's own harness, including the file's optional model/effort tokens).
-Backend selection keeps the existing spawn contract (`--backend`, `FM_BACKEND`, `config/backend`, runtime auto-detection, then tmux); a backend that refuses secondmate spawns surfaces its refusal instead of silently retrying another backend.
+Backend selection starts from the existing spawn contract (`--backend`, `FM_BACKEND`, `config/backend`, runtime auto-detection, then tmux), with one launcher-owned bridge: when no explicit `--backend` is given and that resolution lands on a backend that cannot host a secondmate coordinator (Orca, cmux), the launcher starts the coordinator on tmux and prints a note, so a `config/backend=orca` primary still gets the daily attach workflow below.
+An explicit `--backend orca` (or `cmux`) is forwarded verbatim and surfaces `bin/fm-spawn.sh`'s refusal as a fail-closed diagnostic; the launcher never overrides a backend the caller explicitly requested.
 
 ## Daily Orca workflow
 
 Orca terminals are worktree-bound, so the Orca backend does not host secondmate agents directly; the coordinator lives in the tmux backend.
+This holds even when the primary's `config/backend` is `orca`: the implicit-resolution bridge above hosts the coordinator on tmux automatically, no per-launch flag needed.
 Open an Orca terminal anywhere in the project and run `secondmate <harness>` there: the launcher attaches the tmux-backed coordinator inside that terminal, and re-running it from any other terminal switches to the same one.
 Crewmate work the secondmate dispatches may still use any spawn-capable backend, including Orca-owned task worktrees, per `bin/fm-spawn.sh`.

@@ -26,11 +26,19 @@
 #   fm-spawn resolves the documented secondmate chain
 #   (config/secondmate-harness -> config/crew-harness -> own harness, plus the
 #   file's optional model/effort tokens; bin/fm-harness.sh secondmate).
-#   Backend selection follows the existing spawn contract unchanged: --backend
-#   is forwarded verbatim, and otherwise fm-spawn resolves FM_BACKEND, then
-#   config/backend, then runtime auto-detection, then tmux. A backend that
-#   refuses --secondmate spawns (orca, cmux today) surfaces its refusal as the
-#   blocker; the launcher never silently retries another backend.
+#   Backend selection: an explicit --backend is forwarded verbatim, so
+#   explicitly requesting a backend that refuses --secondmate spawns (orca,
+#   cmux today) still surfaces fm-spawn's refusal as the fail-closed blocker.
+#   Without --backend, the launcher resolves the same chain fm-spawn would
+#   (FM_BACKEND, then config/backend, then runtime auto-detection, then tmux;
+#   fm_backend_name) and, when that resolution lands on a backend that cannot
+#   host a persistent coordinator (orca, cmux), bridges the launch to tmux
+#   with a stderr note: the daily workflow is attaching the tmux coordinator
+#   from a terminal that backend owns (docs/project-secondmate.md "Daily Orca
+#   workflow"), so an implicitly-inherited non-hosting backend must not
+#   refuse. Hosting backends (tmux, herdr, zellij) resolve exactly as before,
+#   and the launcher never overrides a backend the caller explicitly asked
+#   for.
 #   A per-secondmate launch lock under state/ serializes concurrent launcher
 #   runs for the same id, so two racing invocations cannot both observe "not
 #   live" and spawn twice.
@@ -216,7 +224,24 @@ fi
 
 spawn_args=("$ID" --secondmate)
 [ "$HARNESS" = auto ] || spawn_args+=(--harness "$HARNESS")
-[ -z "$BACKEND_ARG" ] || spawn_args+=(--backend "$BACKEND_ARG")
+if [ -n "$BACKEND_ARG" ]; then
+  spawn_args+=(--backend "$BACKEND_ARG")
+else
+  # Implicit-resolution bridge: orca and cmux cannot host a persistent
+  # coordinator (fm-spawn refuses --secondmate on them), so when the primary's
+  # normal resolution lands there the coordinator launches on tmux instead of
+  # refusing. Explicit --backend requests above stay forwarded verbatim so the
+  # fail-closed refusal diagnostic is preserved. Resolution stderr (the
+  # auto-detect notices) is suppressed here; fm-spawn re-resolves and prints
+  # them itself on the non-bridged path.
+  RESOLVED_BACKEND=$(fm_backend_name 2>/dev/null)
+  case "$RESOLVED_BACKEND" in
+    orca|cmux)
+      echo "note: backend '$RESOLVED_BACKEND' cannot host a secondmate coordinator; launching it on tmux instead (pass --backend $RESOLVED_BACKEND to see the refusal)" >&2
+      spawn_args+=(--backend tmux)
+      ;;
+  esac
+fi
 "$FM_ROOT/bin/fm-spawn.sh" "${spawn_args[@]}" || exit 1
 
 [ -f "$META" ] || { echo "error: spawn reported success but no meta at $META" >&2; exit 1; }
