@@ -379,6 +379,32 @@ $repos
 EOF
 }
 
+existing_ancestor_for_path() {
+  local path=$1
+  while [ ! -e "$path" ] && [ "$path" != "/" ]; do
+    path=$(dirname "$path")
+  done
+  [ -d "$path" ] || path=$(dirname "$path")
+  printf '%s\n' "$path"
+}
+
+refuse_shared_home_in_reserved_or_git_worktree() {
+  local home=$1 workspaces ancestor top
+  [ "$PROJECTS_MODE" = shared-external ] || return 0
+  workspaces=$(resolved_path "$PROJECTS/workspaces")
+  if [ "$home" = "$workspaces" ] || path_is_ancestor_of "$workspaces" "$home"; then
+    echo "error: secondmate home cannot be inside reserved Orca workspaces subtree $workspaces: $home" >&2
+    return 1
+  fi
+  ancestor=$(existing_ancestor_for_path "$home")
+  top=$(git -C "$ancestor" rev-parse --show-toplevel 2>/dev/null || true)
+  [ -z "$top" ] || {
+    top=$(resolved_path "$top")
+    echo "error: secondmate home cannot be inside existing git worktree $top: $home" >&2
+    return 1
+  }
+}
+
 validate_operational_dir() {
   local home=$1 name=$2 dir abs_home abs_dir abs_active_home abs_root
   dir="$home/$name"
@@ -949,6 +975,7 @@ seed_home() {
     requested_abs=$(abs_path_for_new "$requested_home")
     refuse_active_home_path "$requested_abs" || return 1
     refuse_shared_home_inside_registered_repo "$requested_abs" || return 1
+    refuse_shared_home_in_reserved_or_git_worktree "$requested_abs" || return 1
   fi
 
   SEED_ROLLBACK_ACTIVE=1

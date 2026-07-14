@@ -206,7 +206,7 @@ test_legacy_single_repo_compatibility() {
 }
 
 test_container_seed_is_reference_only_and_colocated() {
-  local before_api before_web out bad_home bad_repo_home err
+  local before_api before_web out bad_home bad_repo_home unregistered_repo_home reserved_home err
   before_api=$(git -C "$ALPHA_API" status --porcelain=v1; git -C "$ALPHA_API" rev-parse HEAD)
   before_web=$(git -C "$ALPHA_WEB" status --porcelain=v1; git -C "$ALPHA_WEB" rev-parse HEAD)
 
@@ -219,6 +219,27 @@ test_container_seed_is_reference_only_and_colocated() {
   assert_grep 'secondmate home cannot be inside registered canonical repo' "$err" \
     "shared seed did not explain canonical repo home refusal"
   assert_absent "$bad_repo_home" "shared seed created a secondmate home inside alpha/api"
+
+  reserved_home="$ORCA_BASE/workspaces/.secondmate"
+  err="$TMP_ROOT/reserved-workspaces-home.err"
+  if FM_HOME="$MAIN_HOME" FM_SECONDMATE_CHARTER='reserved workspace domain' \
+      "$ROOT/bin/fm-home-seed.sh" workspace-sm "$reserved_home" alpha > /dev/null 2>"$err"; then
+    fail "shared seed accepted a secondmate home inside reserved workspaces"
+  fi
+  assert_grep 'secondmate home cannot be inside reserved Orca workspaces subtree' "$err" \
+    "shared seed did not explain reserved workspace home refusal"
+  assert_absent "$reserved_home" "shared seed created a secondmate home inside reserved workspaces"
+
+  unregistered_repo_home="$ORCA_BASE/base-commerce/.secondmate"
+  make_repo "$ORCA_BASE/base-commerce" "$TMP_ROOT/remotes/base-commerce.git"
+  err="$TMP_ROOT/unregistered-repo-home.err"
+  if FM_HOME="$MAIN_HOME" FM_SECONDMATE_CHARTER='unregistered checkout domain' \
+      "$ROOT/bin/fm-home-seed.sh" base-commerce-sm "$unregistered_repo_home" alpha > /dev/null 2>"$err"; then
+    fail "shared seed accepted a secondmate home inside an unregistered checkout"
+  fi
+  assert_grep 'secondmate home cannot be inside existing git worktree' "$err" \
+    "shared seed did not explain unregistered checkout home refusal"
+  assert_absent "$unregistered_repo_home" "shared seed created a secondmate home inside base-commerce"
 
   out=$(FM_HOME="$MAIN_HOME" FM_SECONDMATE_CHARTER='alpha container domain' \
     FM_SECONDMATE_SCOPE='alpha product work' \
@@ -247,6 +268,21 @@ test_container_seed_is_reference_only_and_colocated() {
   assert_grep 'refusing to mutate the external checkout' "$err" "unready repo refusal was not explicit"
   assert_absent "$bad_home" "failed shared seed left a secondmate home behind"
   pass "container seeding creates a real sibling .secondmate and owns no canonical repo"
+}
+
+test_legacy_seed_keeps_existing_home_placement_behavior() {
+  local home repo secondmate
+  home="$TMP_ROOT/legacy-seed-home"
+  repo="$home/projects/legacy"
+  secondmate="$TMP_ROOT/legacy-secondmate"
+  mkdir -p "$home/config" "$home/data" "$home/state" "$home/projects"
+  make_repo "$repo" "$TMP_ROOT/remotes/legacy-seed.git"
+  printf '%s\n' '- legacy [direct-PR] - legacy project (added 2026-07-13)' > "$home/data/projects.md"
+  FM_HOME="$home" FM_SECONDMATE_CHARTER='legacy domain' \
+    "$ROOT/bin/fm-home-seed.sh" legacy-sm "$secondmate" legacy > /dev/null \
+    || fail "legacy seed changed its existing secondmate home placement behavior"
+  assert_present "$secondmate/.fm-secondmate-home" "legacy seed did not create the requested home"
+  pass "legacy mode retains its existing home placement behavior"
 }
 
 test_registry_sync_and_route_from_container_context() {
@@ -289,4 +325,5 @@ test_resolver_precedence_and_fail_closed_config
 test_registry_drives_containers_and_repo_selection
 test_legacy_single_repo_compatibility
 test_container_seed_is_reference_only_and_colocated
+test_legacy_seed_keeps_existing_home_placement_behavior
 test_registry_sync_and_route_from_container_context
