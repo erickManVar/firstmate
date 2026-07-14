@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Ergonomic alias for bin/fm-secondmate.sh, the project secondmate launcher.
+# Put this bin/ directory on PATH (or alias it) so `secondmate codex`,
+# `secondmate claude`, and `secondmate auto` work from any registered project
+# container, repo, or repo subdirectory; all arguments pass through unchanged.
+set -eu
+exec "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-secondmate.sh" "$@"

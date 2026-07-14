@@ -367,6 +367,9 @@ Touch nothing else.
 
 If `no-mistakes doctor` reports problems, fix the environment (auth, daemon) before dispatching work to that project.
 
+For a shared-container project, `bin/fm-project-init.sh` performs the whole onboarding - container validation, the registry line, delivery-mode initialization, and transactional `.secondmate` seeding - in one guarded command.
+The captain launches or attaches that project secondmate with `bin/secondmate <harness>` from anywhere in the container; `docs/project-secondmate.md` owns the workflow.
+
 ## 7. Task lifecycle
 
 ### Intake
