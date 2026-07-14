@@ -206,9 +206,19 @@ test_legacy_single_repo_compatibility() {
 }
 
 test_container_seed_is_reference_only_and_colocated() {
-  local before_api before_web out bad_home err
+  local before_api before_web out bad_home bad_repo_home err
   before_api=$(git -C "$ALPHA_API" status --porcelain=v1; git -C "$ALPHA_API" rev-parse HEAD)
   before_web=$(git -C "$ALPHA_WEB" status --porcelain=v1; git -C "$ALPHA_WEB" rev-parse HEAD)
+
+  bad_repo_home="$ALPHA_API/.secondmate"
+  err="$TMP_ROOT/inside-repo.err"
+  if FM_HOME="$MAIN_HOME" FM_SECONDMATE_CHARTER='alpha api domain' \
+      "$ROOT/bin/fm-home-seed.sh" alpha-api-sm "$bad_repo_home" alpha > /dev/null 2>"$err"; then
+    fail "shared seed accepted a secondmate home inside a registered canonical repo"
+  fi
+  assert_grep 'secondmate home cannot be inside registered canonical repo' "$err" \
+    "shared seed did not explain canonical repo home refusal"
+  assert_absent "$bad_repo_home" "shared seed created a secondmate home inside alpha/api"
 
   out=$(FM_HOME="$MAIN_HOME" FM_SECONDMATE_CHARTER='alpha container domain' \
     FM_SECONDMATE_SCOPE='alpha product work' \

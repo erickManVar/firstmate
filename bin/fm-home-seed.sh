@@ -358,6 +358,27 @@ refuse_active_home_path() {
   fi
 }
 
+refuse_shared_home_inside_registered_repo() {
+  local home=$1 project repo repos repo_paths
+  [ "$PROJECTS_MODE" = shared-external ] || return 0
+  repos=$(fm_project_registry_names) || return 1
+  while IFS= read -r project; do
+    [ -n "$project" ] || continue
+    repo_paths=$(fm_project_repo_paths "$project") || return 1
+    while IFS= read -r repo; do
+      [ -n "$repo" ] || continue
+      if [ "$home" = "$repo" ] || path_is_ancestor_of "$repo" "$home"; then
+        echo "error: secondmate home cannot be inside registered canonical repo $repo: $home" >&2
+        return 1
+      fi
+    done <<EOF
+$repo_paths
+EOF
+  done <<EOF
+$repos
+EOF
+}
+
 validate_operational_dir() {
   local home=$1 name=$2 dir abs_home abs_dir abs_active_home abs_root
   dir="$home/$name"
@@ -924,6 +945,11 @@ seed_home() {
   for project in "$@"; do
     validate_seed_project "$project"
   done
+  if [ "$requested_home" != "-" ]; then
+    requested_abs=$(abs_path_for_new "$requested_home")
+    refuse_active_home_path "$requested_abs" || return 1
+    refuse_shared_home_inside_registered_repo "$requested_abs" || return 1
+  fi
 
   SEED_ROLLBACK_ACTIVE=1
   SEED_COMMITTED=0
@@ -955,8 +981,6 @@ seed_home() {
     SEED_HOME="$home"
     home=$(verify_firstmate_home "$home")
   else
-    requested_abs=$(abs_path_for_new "$requested_home")
-    refuse_active_home_path "$requested_abs" || return 1
     validate_home_assignment "$id" "$requested_abs" || return 1
     SEED_HOME="$requested_abs"
     [ -e "$requested_abs" ] || SEED_HOME_CREATED=1
