@@ -78,9 +78,9 @@ pass "missing harness binary fails before any launch"
 
 run_entry 0 "claude default mode" claude
 assert_grep "pwd=$STUB" "$FM_FAKE_LOG" "claude launches from the stub repo root, not the caller cwd"
-[ "$(grep -c '^arg=' "$FM_FAKE_LOG")" = 1 ] || fail "claude resume passes exactly one argument"
-assert_grep "arg=--continue" "$FM_FAKE_LOG" "claude resume uses --continue"
-pass "claude default mode anchors to the repo root and resumes natively"
+[ "$(sed -n 's/^arg=//p' "$FM_FAKE_LOG" | tr '\n' ' ')" = "--continue --model claude-fable-5 --effort medium " ] \
+  || fail "claude resume is exactly '--continue' plus the recommended coordinator posture pair"
+pass "claude default mode anchors to the repo root, resumes natively, and defaults to the Fable 5 medium posture"
 
 run_entry 0 "codex default mode" codex
 assert_grep "pwd=$STUB" "$FM_FAKE_LOG" "codex launches from the stub repo root"
@@ -95,9 +95,21 @@ run_entry 0 "claude forwarding" claude --model opus --effort high
   || fail "claude forwards model/effort arguments verbatim after --continue"
 pass "documented harness arguments forward verbatim in order"
 
+# Coordinator posture injection is all-or-nothing: supplying either axis
+# disables the pair, so an explicit override never gains a companion flag.
+run_entry 0 "claude model-only override" claude --model opus
+[ "$(sed -n 's/^arg=//p' "$FM_FAKE_LOG" | tr '\n' ' ')" = "--continue --model opus " ] \
+  || fail "an explicit --model must disable the whole posture injection"
+pass "an explicit --model disables the default posture pair"
+
+run_entry 0 "claude effort-only override (equals form)" claude --effort=high
+[ "$(sed -n 's/^arg=//p' "$FM_FAKE_LOG" | tr '\n' ' ')" = "--continue --effort=high " ] \
+  || fail "an explicit --effort=<v> must disable the whole posture injection"
+pass "an explicit --effort disables the default posture pair"
+
 run_entry 0 "-- escape" claude -- --new
-[ "$(sed -n 's/^arg=//p' "$FM_FAKE_LOG" | tr '\n' ' ')" = "--continue --new " ] \
-  || fail "-- forwards a would-be firstmate flag to the harness"
+[ "$(sed -n 's/^arg=//p' "$FM_FAKE_LOG" | tr '\n' ' ')" = "--continue --new --model claude-fable-5 --effort medium " ] \
+  || fail "-- forwards a would-be firstmate flag to the harness (posture pair still appended)"
 pass "-- stops firstmate's own flag scan"
 
 # --- fresh mode ---------------------------------------------------------------
@@ -105,9 +117,12 @@ pass "-- stops firstmate's own flag scan"
 run_entry 0 "claude --new" claude --new
 assert_no_grep "arg=--continue" "$FM_FAKE_LOG" "fresh mode does not resume"
 assert_no_grep "dangerously-skip-permissions" "$FM_FAKE_LOG" "no hardcoded claude bypass permissions"
+assert_grep "arg=--model" "$FM_FAKE_LOG" "fresh mode still defaults to the coordinator posture"
 assert_grep "fm-session-start.sh" "$FM_FAKE_LOG" "fresh prompt requests the mandatory session start"
 assert_grep "recap" "$FM_FAKE_LOG" "fresh prompt requests a captain recap"
-pass "claude --new starts fresh with the recovery/recap prompt and no bypass flag"
+sed -n 's/^arg=//p' "$FM_FAKE_LOG" | tail -1 | grep -q "fm-session-start.sh" \
+  || fail "claude fresh prompt must stay the final positional argument after the posture pair"
+pass "claude --new starts fresh with the recovery/recap prompt, the posture pair, and no bypass flag"
 
 run_entry 0 "codex --new with forwarding" codex --new -m gpt-5.5
 args=$(sed -n 's/^arg=//p' "$FM_FAKE_LOG")

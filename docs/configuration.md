@@ -211,6 +211,28 @@ The primary propagates `config/crew-dispatch.json`, `config/crew-harness`, `conf
 For grok, `fm-spawn.sh` installs one firstmate-owned global turn-end hook under `$GROK_HOME/hooks/`, or `~/.grok/hooks/` when `GROK_HOME` is unset, and drops a per-task `.fm-grok-turnend` pointer in the worktree, with teardown removing the task token and pointer.
 For Pi secondmate launches, `fm-spawn.sh` starts Pi with `-e` pointed at the secondmate home's own tracked `.pi/extensions/fm-primary-pi-watch.ts` and `.pi/extensions/fm-primary-turnend-guard.ts`, both already present from the secondmate home's git worktree.
 
+## Coordinator posture (bin/firstmate and secondmate launches)
+
+The recommended default posture for a coordinator agent - the primary firstmate and every secondmate - is Claude Fable 5 at medium effort.
+This section is the single owner of that default; the entry and spawn scripts implement it and point here.
+`bin/firstmate claude` appends `--model claude-fable-5 --effort medium` to both resume and fresh launches when the forwarded arguments contain neither `--model` nor `--effort`; passing either axis disables the whole injection, so an explicit override never gains a surprise companion flag.
+`bin/fm-spawn.sh --secondmate` applies the same pair to a templated claude secondmate launch that still has neither a model nor an effort after explicit `--model`/`--effort` flags and the optional `config/secondmate-harness` tokens; pinning either axis disables the default.
+The default is claude-only and pair-only: raw launch commands, codex, and every other harness launch exactly as before, so `firstmate codex` and `secondmate codex` remain fully supported explicit choices.
+Crewmate and scout dispatch is unaffected; its recommended profiles live in the crew dispatch policy above.
+
+## Delivery posture (rapid-local / peer-ship)
+
+Each meaningful ship task carries a durable delivery posture, decided by the captain at dispatch: `rapid-local` or `peer-ship`.
+This section is the single owner of the posture record and its mapping; `AGENTS.md` task lifecycle owns the coordinator procedure (ask the captain when the posture was not supplied), and the script headers own exact flags.
+`rapid-local` maps the task onto the existing guarded local-only delivery machinery whatever the project's registered mode is: an isolated task worktree, focused validation by the crewmate, a `done: ready in branch fm/<id>` stop, firstmate diff review, captain approval, and the fast-forward-only `bin/fm-merge-local.sh` merge into local `main` - no PR requirement.
+`peer-ship` keeps the project's registered remote mode (`no-mistakes` or `direct-PR`): an independent worktree, review and final validation, and the PR gate; it is refused for a `local-only` project, which has no remote path.
+Neither posture creates a direct-edit path into a canonical repository; both deliver through an isolated worktree and the existing guarded merge or PR machinery.
+`bin/fm-brief.sh` is the fail-closed gate: a ship brief cannot be scaffolded without `--delivery`, and the chosen value is written to `data/<task-id>/delivery`.
+`bin/fm-spawn.sh` reads that record for ship spawns, persists it as `delivery=` in `state/<task-id>.meta`, and maps the task's effective `mode=` (rapid-local forces `local-only`; peer-ship keeps the registered mode), so the posture survives restart and recovery and downstream tooling (`fm-review-diff.sh`, `fm-merge-local.sh`, `fm-teardown.sh`) branches on the already-verified `mode=` semantics.
+`bin/fm-promote.sh` requires the same `--delivery` flag when a scout is promoted to ship work, because promotion creates new meaningful ship work.
+A task record with no posture - a pre-policy task, or a deliberately hand-written brief - keeps legacy project-mode behavior unchanged; an unknown recorded value fails closed at spawn before any backend mutation.
+Scouts and secondmates have no delivery posture: a scout delivers a report and a secondmate is a coordinator, not a deliverable.
+
 ## Crew dispatch profiles (config/crew-dispatch.json)
 
 `config/crew-dispatch.json` is an optional local, gitignored file containing natural-language rules that firstmate reads before dispatching a crewmate or scout.
@@ -246,6 +268,8 @@ An omitted model or effort means the selected harness uses its own default for t
 If a selected profile carries an effort value the chosen harness does not accept, `fm-spawn.sh` records the requested `effort=` in task meta for traceability but omits the launch flag, and bootstrap reports the invalid harness/effort pair as a `CREW_DISPATCH` diagnostic when it is visible in the file.
 `quota-balanced` selection is deterministic and implemented by `bin/fm-dispatch-select.sh`, whose header owns the general-window rules, the 20 point stale-clear freshness margin, vendor-availability handling, and the degrade-to-first-element fallbacks; quota trouble never blocks dispatch.
 See [`docs/examples/crew-dispatch.json`](examples/crew-dispatch.json) for a starting point to copy into local `config/crew-dispatch.json`.
+That example is also the documented recommended dispatch policy: implementation crewmates default to codex `gpt-5.6-terra` at medium effort, genuinely complex or risky implementation escalates to codex `gpt-5.6-sol` at high effort, and an independent architecture or review pass uses `claude-fable-5` high or `gpt-5.6-sol` high when a second opinion is materially warranted.
+Firstmate never writes or overwrites a captain's local `config/crew-dispatch.json` to match the example; the captain adopts or edits the recommended policy deliberately, and an existing local file that already expresses it needs no change.
 When the file exists, bootstrap validates it with `jq`.
 Valid files produce a `CREW_DISPATCH: active config/crew-dispatch.json` block that lists each rule and prints `default:` when present.
 Malformed JSON, an unverified harness, a malformed array profile, an unknown `select`, or an effort value unsupported by that harness is reported as `CREW_DISPATCH: invalid config/crew-dispatch.json - ...`; missing `jq` is reported through the normal `MISSING: jq` install-consent flow.

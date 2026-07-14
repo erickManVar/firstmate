@@ -22,6 +22,13 @@
 #   `codex resume` (verified against codex-cli 0.144.4, docs/primary-entry.md).
 #   Claude launches intentionally carry NO bypass-permissions flag.
 #
+#   Coordinator posture (docs/configuration.md "Coordinator posture"): a claude
+#   launch with neither --model nor --effort among the forwarded arguments
+#   appends the recommended coordinator pair, --model claude-fable-5 --effort
+#   medium. Supplying either axis disables the whole injection, so an explicit
+#   override never gains a surprise companion flag. Codex launches are never
+#   touched by this default.
+#
 #   Argument forwarding is unambiguous: after the harness name, firstmate
 #   consumes only its own flags (--new, -h/--help); `--` stops that scan; every
 #   other argument is forwarded to the harness verbatim, in order, so
@@ -54,7 +61,9 @@ firstmate repository root.
 Everything else after the harness name is forwarded to the harness verbatim
 (e.g. --model, --effort); use `--` to forward an argument firstmate would
 otherwise consume itself. Codex launches carry the standing captain-approved
---yolo posture; claude launches add no permission flags.
+--yolo posture; claude launches add no permission flags. A claude launch with
+neither --model nor --effort defaults to the recommended coordinator posture
+(--model claude-fable-5 --effort medium); passing either axis disables it.
 EOF
 }
 
@@ -102,6 +111,23 @@ case "$HARNESS/$MODE" in
   codex/new) CMD=(codex --yolo) ;;
 esac
 CMD+=(${FWD[@]+"${FWD[@]}"})
+
+# Recommended coordinator posture, claude only (see header): inject the pair
+# only when the caller supplied neither axis, and always before the fresh-mode
+# prompt so that prompt stays the final positional argument.
+if [ "$HARNESS" = claude ]; then
+  has_model=0
+  has_effort=0
+  for a in ${FWD[@]+"${FWD[@]}"}; do
+    case "$a" in
+      --model|--model=*) has_model=1 ;;
+      --effort|--effort=*) has_effort=1 ;;
+    esac
+  done
+  if [ "$has_model" -eq 0 ] && [ "$has_effort" -eq 0 ]; then
+    CMD+=(--model claude-fable-5 --effort medium)
+  fi
+fi
 [ "$MODE" = new ] && CMD+=("$FRESH_PROMPT")
 
 "${CMD[@]}"

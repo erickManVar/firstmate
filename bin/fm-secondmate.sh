@@ -26,6 +26,8 @@
 #   fm-spawn resolves the documented secondmate chain
 #   (config/secondmate-harness -> config/crew-harness -> own harness, plus the
 #   file's optional model/effort tokens; bin/fm-harness.sh secondmate).
+#   A claude coordinator with no pinned model/effort launches on the recommended
+#   coordinator posture (docs/configuration.md "Coordinator posture").
 #   Backend selection: an explicit --backend is forwarded verbatim. A dead
 #   endpoint respawns on the backend its meta records (absent backend= means
 #   tmux), so a coordinator never silently changes hosting on recovery.

@@ -50,6 +50,18 @@
 #   the file governs the spawn, its model/effort tokens are re-resolved on every
 #   respawn exactly like the harness axis, and explicit --model/--effort flags
 #   still win over the file's tokens.
+#   Coordinator posture (docs/configuration.md "Coordinator posture"): a templated
+#   claude --secondmate spawn that still has neither model nor effort after the
+#   explicit flags and config tokens above launches as claude-fable-5 medium,
+#   applied as a pair; pinning either axis, a raw launch command, or any other
+#   harness disables the default, so explicit codex coordinators are untouched.
+#   Delivery posture (docs/configuration.md "Delivery posture"): a ship spawn
+#   whose data/<task-id>/delivery records rapid-local or peer-ship (written by
+#   fm-brief.sh or fm-promote.sh) persists that posture as delivery= in meta and
+#   maps the task's effective mode - rapid-local forces the guarded local-only
+#   path, peer-ship keeps the registered remote mode and refuses a local-only
+#   project. An unknown recorded value fails closed before any backend mutation.
+#   A ship task with NO record keeps legacy project-mode behavior unchanged.
 #   A --secondmate spawn also propagates the primary's declared inheritable config
 #   into the secondmate home's config/, so the secondmate's OWN crewmates,
 #   dispatch profiles, and backlog backend inherit the primary's settings
@@ -91,7 +103,7 @@ set -eu
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
-  sed -n '2,78p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,91p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 case "${1:-}" in
@@ -238,6 +250,7 @@ orca_spawn_abort_cleanup() {
           echo "kind=$KIND"
           echo "mode=${MODE:-no-mistakes}"
           echo "yolo=${YOLO:-off}"
+          [ -z "${DELIVERY:-}" ] || echo "delivery=$DELIVERY"
           echo "tasktmp=${TASK_TMP:-}"
           echo "model=${MODEL:-default}"
           echo "effort=${EFFORT:-default}"
@@ -360,9 +373,11 @@ launch_template() {
   esac
 }
 
+LAUNCH_TEMPLATED=1
 case "$ARG3" in
   *' '*)  # raw launch command (unverified-adapter escape hatch)
     LAUNCH=$ARG3
+    LAUNCH_TEMPLATED=0
     HARNESS=""
     for word in $LAUNCH; do
       case "$word" in [A-Za-z_]*=*) continue ;; *) HARNESS=$(basename "$word"); break ;; esac
@@ -416,6 +431,18 @@ if [ "$KIND" = secondmate ] && [ -z "$ARG3" ]; then
       esac
     fi
   fi
+fi
+
+# Recommended coordinator posture (docs/configuration.md "Coordinator posture"):
+# a templated claude secondmate that still has neither a model nor an effort
+# after the explicit flags and config/secondmate-harness tokens above launches
+# as Fable 5 medium, applied as a pair. Pinning either axis disables the
+# default, raw launch commands are never touched, and every other harness
+# (an explicit codex coordinator included) launches exactly as before.
+if [ "$KIND" = secondmate ] && [ "$LAUNCH_TEMPLATED" -eq 1 ] && [ "$HARNESS" = claude ] \
+  && [ -z "$MODEL" ] && [ -z "$EFFORT" ]; then
+  MODEL=claude-fable-5
+  EFFORT=medium
 fi
 
 secondmate_registry_value() {
@@ -654,6 +681,52 @@ else
   BRIEF="$DATA/$ID/brief.md"
 fi
 [ -f "$BRIEF" ] || { echo "error: no brief at $BRIEF" >&2; exit 1; }
+
+# Delivery posture record (see header; docs/configuration.md "Delivery
+# posture"). Read and validate before any backend mutation so an unknown value
+# fails closed with nothing to clean up. Absent record = legacy behavior.
+DELIVERY=
+if [ "$KIND" = ship ] && [ -f "$DATA/$ID/delivery" ]; then
+  DELIVERY=$(tr -d '[:space:]' < "$DATA/$ID/delivery" || true)
+  case "$DELIVERY" in
+    rapid-local|peer-ship) ;;
+    *)
+      echo "error: data/$ID/delivery records unknown delivery posture '${DELIVERY:-}' (expected rapid-local or peer-ship); fix the record before spawning" >&2
+      exit 1
+      ;;
+  esac
+fi
+
+# Per-project delivery mode + yolo flag (bin/fm-project-mode.sh; AGENTS.md project
+# management and task lifecycle). Resolved before any backend mutation so a
+# posture/mode conflict fails closed with nothing to clean up; recorded in meta so
+# fm-teardown's safety check and the validate/merge stages can branch on them.
+# Mode governs ship tasks; a scout's deliverable is a report, not a merge, so
+# scout teardown ignores mode.
+SECONDMATE_PROJECTS=
+if [ "$KIND" = secondmate ]; then
+  MODE=secondmate
+  YOLO=off
+  SECONDMATE_PROJECTS=$(secondmate_registry_value "$ID" projects || true)
+else
+  read -r MODE YOLO <<EOF
+$("$FM_ROOT/bin/fm-project-mode.sh" "$PROJECT_NAME")
+EOF
+fi
+# Delivery posture mapping: rapid-local forces the task's effective mode onto
+# the guarded local-only path; peer-ship keeps the registered remote mode and
+# refuses a project that has none.
+if [ -n "$DELIVERY" ]; then
+  case "$DELIVERY" in
+    rapid-local) MODE=local-only ;;
+    peer-ship)
+      if [ "$MODE" = local-only ]; then
+        echo "error: delivery posture peer-ship needs a remote-capable delivery mode, but project $PROJECT_NAME is registered local-only; use rapid-local or change the project mode" >&2
+        exit 1
+      fi
+      ;;
+  esac
+fi
 
 # PROJ_ABS can still carry a symlinked path component (e.g. macOS's /tmp ->
 # /private/tmp) when it came from the ship/scout branch's logical `pwd` above.
@@ -1036,21 +1109,6 @@ EOF
   esac
 fi
 
-# Per-project delivery mode + yolo flag (bin/fm-project-mode.sh; AGENTS.md project management and task lifecycle).
-# Recorded in meta so fm-teardown's safety check and the validate/merge stages can
-# branch on them. Mode governs ship tasks; a scout's deliverable is a report, not a
-# merge, so scout teardown ignores mode.
-SECONDMATE_PROJECTS=
-if [ "$KIND" = secondmate ]; then
-  MODE=secondmate
-  YOLO=off
-  SECONDMATE_PROJECTS=$(secondmate_registry_value "$ID" projects || true)
-else
-  read -r MODE YOLO <<EOF
-$("$FM_ROOT/bin/fm-project-mode.sh" "$PROJECT_NAME")
-EOF
-fi
-
 META_WINDOW=$T
 [ "$BACKEND" = orca ] && META_WINDOW=$W
 {
@@ -1061,6 +1119,9 @@ META_WINDOW=$T
   echo "kind=$KIND"
   echo "mode=$MODE"
   echo "yolo=$YOLO"
+  # delivery= is written only for a ship task with a recorded posture, so every
+  # other task's meta stays byte-identical (absent delivery= means legacy).
+  [ -z "$DELIVERY" ] || echo "delivery=$DELIVERY"
   echo "tasktmp=$TASK_TMP"
   echo "model=${MODEL:-default}"
   echo "effort=${EFFORT:-default}"

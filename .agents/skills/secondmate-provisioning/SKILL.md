@@ -74,7 +74,8 @@ A `secondmate` role may resolve those repos and spawn isolated task worktrees bu
 `FM_PROJECTS_OVERRIDE` remains the highest-precedence one-shot project-base input, but shared seeding requires the durable `config/projects-root` file because environment overrides are cleared on secondmate launch.
 
 `config/secondmate-harness` may also pin a concrete model and effort for the secondmate agent, in the SAME file rather than a new one: the format is a single whitespace-separated line `<harness> [<model>] [<effort>]`, with only the first non-empty, non-comment line parsed.
-A bare `<harness>` (today's format, e.g. `claude`) behaves exactly as before - harness only, no model/effort flag - so this is fully backward-compatible.
+A bare `<harness>` still resolves harness-only tokens (`fm-harness.sh secondmate-model`/`secondmate-effort` stay empty), but at spawn time a templated claude secondmate with neither a model nor an effort from any source launches on the recommended coordinator posture, Fable 5 medium, applied as a pair; pinning either axis disables that default, and every other harness (an explicit codex coordinator included) launches with no injected model or effort exactly as before.
+`docs/configuration.md` "Coordinator posture" owns that default.
 `bin/fm-harness.sh secondmate-model` and `bin/fm-harness.sh secondmate-effort` print the optional 2nd/3rd tokens (empty when absent, or when the file is absent/`default`/harness-only); they read only `config/secondmate-harness`, never `config/crew-harness`, which stays a bare adapter name.
 For a `--secondmate` spawn, `bin/fm-spawn.sh` populates `MODEL`/`EFFORT` from those tokens only when the harness itself came from the secondmate config path for that spawn.
 An explicit per-spawn `--harness` flag, positional harness arg, or raw launch command starts clean on model and effort too, unless the caller also passes explicit `--model` or `--effort`.
@@ -93,6 +94,8 @@ Inheritance copies the literal `config/crew-harness` file, so a secondmate's own
 No reread nudge is needed at spawn or respawn because the agent reads `AGENTS.md` fresh on launch; only the bootstrap sweep's `NUDGE_SECONDMATES:` case (a RUNNING home whose instruction surface advanced) needs one.
 For already-live secondmates, use `bin/fm-config-push.sh` to push a mid-session inherited-config change without running the tracked-file fast-forward or nudging the agents.
 It uses the same live-home discovery and propagation helper as bootstrap and reports each item as `pushed`, `unchanged`, `skipped`, or `error`.
+A contract or policy change - the delivery posture and coordinator posture included - never mutates a running secondmate mid-conversation: convergence is shared code landing on the primary default branch, inheritable config propagating through the sweep or `bin/fm-config-push.sh`, and the next restart or respawn reading the new `AGENTS.md` contract from disk while the home keeps its own `data/`, backlog, and history.
+Existing charters on disk are not rewritten for such a change; a restarted coordinator picks the new intake contract up from `AGENTS.md`, and only newly scaffolded charters carry the updated charter wording directly.
 `bin/fm-home-seed.sh` refuses to copy a missing or placeholder charter.
 
 Direct seed without a preexisting brief requires `FM_SECONDMATE_CHARTER`.

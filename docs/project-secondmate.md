@@ -31,6 +31,7 @@ It routes the current directory to the project's registered secondmate and then 
 - Anything unprovable - ambiguous or unregistered paths, a malformed or foreign-marked home, duplicate or overlapping registry entries, a pane whose agent identity cannot be confirmed, a stale launch lock whose owner cannot be proven dead, or a concurrent launcher run - fails closed with the reason.
 
 An explicit harness wins for that launch; `auto` defers to the documented secondmate chain (`config/secondmate-harness` -> `config/crew-harness` -> the primary's own harness, including the file's optional model/effort tokens).
+A claude coordinator with no model or effort pinned from any source launches on the recommended Fable 5 medium posture, while `secondmate codex` stays a fully supported explicit choice with no injected flags; `docs/configuration.md` "Coordinator posture" owns that default.
 Backend selection starts from the existing spawn contract (`--backend`, `FM_BACKEND`, `config/backend`, runtime auto-detection, then tmux), with one launcher-owned bridge: when no explicit `--backend` is given and that resolution lands on cmux, which cannot host a secondmate coordinator, the launcher starts the coordinator on tmux and prints a note.
 Orca hosts coordinators natively and is never bridged; an explicit `--backend` is always forwarded verbatim.
 

@@ -6,8 +6,16 @@
 # description, acceptance criteria, and context, and may adjust other sections
 # when the task genuinely deviates (e.g. working an existing external PR instead
 # of shipping a new one).
-# Usage: fm-brief.sh <task-id> <project-or-project/repo> [--scout] [--herdr-lab]
+# Usage: fm-brief.sh <task-id> <project-or-project/repo> --delivery <rapid-local|peer-ship> [--scout] [--herdr-lab]
 #        fm-brief.sh <task-id> --secondmate {<project>...|--no-projects}
+#   --delivery is REQUIRED for ship briefs and rejected for scout and secondmate
+#   scaffolds (docs/configuration.md "Delivery posture"). It is the fail-closed
+#   dispatch gate: when the captain has not supplied a posture, ask before
+#   scaffolding instead of guessing. The chosen posture is written durably to
+#   data/<task-id>/delivery (fm-spawn.sh persists it into task meta) and shapes
+#   the definition of done: rapid-local is the guarded local-only path plus a
+#   focused-validation requirement and no PR; peer-ship rides the project's
+#   registered remote mode and is refused for a local-only project.
 #   --scout writes the scout contract instead: the deliverable is a report at
 #   data/<task-id>/report.md (no branch, no push, no PR) and the worktree is scratch.
 #   --secondmate writes a persistent secondmate charter. In legacy mode the
@@ -28,13 +36,15 @@
 #   The flag must be explicit because {TASK} is filled after scaffolding and the
 #   caller-supplied repo string cannot reliably identify this repo. Briefs made
 #   without it carry a loud declaration so an omitted contract cannot be silent.
-# For ship tasks, the definition of done is shaped by the project's delivery mode
-# (data/projects.md via fm-project-mode.sh; see AGENTS.md project management
-# and task lifecycle):
-#   no-mistakes  implement -> /no-mistakes pipeline -> PR -> captain merge (default)
-#   direct-PR    implement -> push + open PR via gh-axi (no pipeline) -> captain merge
-#   local-only   implement on branch, stop and report "ready in branch" (no push/PR);
-#                firstmate reviews, captain approves, firstmate merges to local main
+# For ship tasks, the definition of done is shaped by the delivery posture first,
+# then the project's delivery mode (data/projects.md via fm-project-mode.sh; see
+# AGENTS.md project management and task lifecycle):
+#   rapid-local  implement on branch, focused validation, stop and report "ready
+#                in branch" (no push/PR); firstmate reviews, captain approves,
+#                firstmate merges to local main - whatever the registered mode
+#   peer-ship + no-mistakes  implement -> /no-mistakes pipeline -> PR -> captain merge
+#   peer-ship + direct-PR    implement -> push + open PR via gh-axi (no pipeline) -> captain merge
+#   peer-ship + local-only   refused: peer-ship needs a remote-capable mode
 # Ship briefs begin with a worktree-isolation assertion before the branch step.
 # Scout tasks ignore mode - their deliverable is a report, not a merge.
 # Every scaffold's status protocol distinguishes the configured
@@ -78,17 +88,39 @@ PROJECTS_MODE=$(fm_projects_mode) || exit 1
 KIND=ship
 HERDR_LAB=0
 NO_PROJECTS=0
+DELIVERY=
 POS=()
+want_value=
 for a in "$@"; do
+  if [ -n "$want_value" ]; then
+    case "$a" in
+      --*) echo "error: --$want_value requires a value" >&2; exit 1 ;;
+    esac
+    DELIVERY=$a
+    want_value=
+    continue
+  fi
   case "$a" in
     --scout) KIND=scout ;;
     --secondmate) KIND=secondmate ;;
     --herdr-lab) HERDR_LAB=1 ;;
     --no-projects) NO_PROJECTS=1 ;;
+    --delivery) want_value=delivery ;;
+    --delivery=*) DELIVERY=${a#--delivery=} ;;
     *) POS+=("$a") ;;
   esac
 done
+[ -z "$want_value" ] || { echo "error: --$want_value requires a value" >&2; exit 1; }
 ID=${POS[0]}
+
+case "$DELIVERY" in
+  ''|rapid-local|peer-ship) ;;
+  *) echo "error: --delivery must be rapid-local or peer-ship, got '$DELIVERY'" >&2; exit 1 ;;
+esac
+if [ -n "$DELIVERY" ] && [ "$KIND" != ship ]; then
+  echo "error: --delivery applies only to ship briefs; a $KIND deliverable has no delivery posture" >&2
+  exit 1
+fi
 
 if [ "$KIND" = secondmate ] && [ "$HERDR_LAB" -eq 1 ]; then
   echo "error: --herdr-lab applies only to crewmate ship or scout briefs" >&2
@@ -152,8 +184,11 @@ $PROJECT_ACCESS_BODY
 # Operating model
 You are in an isolated firstmate home. The local \`AGENTS.md\` is your job description, and your local \`data/\`, \`state/\`, \`config/\`, and \`projects/\` dirs are yours to operate.
 $PROJECT_ACCESS_NOTE
+You are the coordinator; your crewmates are the workers: delegate implementation to crewmates in isolated task worktrees and never edit a canonical repo directly.
 Delegate project work to your own crewmates with the normal firstmate lifecycle: brief, spawn, status, watcher, steer, teardown, and recovery.
 Do not invent a second delegation system.
+Meaningful ship work needs a recorded delivery posture before dispatch: \`rapid-local\` (local delivery with focused validation and no PR) or \`peer-ship\` (full validation and the PR gate through the registered mode), scaffolded with \`bin/fm-brief.sh ... --delivery <posture>\`.
+When a routed request supplies no posture, escalate \`needs-decision:\` with the two options via the status path below instead of guessing.
 You do not generate your own work.
 Act only on tasks the main firstmate routes to you.
 Never start a survey, audit, or "find improvements" sweep on your own initiative; that is not your job and it is unwanted.
@@ -194,6 +229,14 @@ exit 0
 fi
 
 REPO=${POS[1]}
+
+# Fail-closed dispatch gate (see header): a ship brief cannot be scaffolded
+# without an explicit delivery posture. Scouts are posture-free by design.
+if [ "$KIND" = ship ] && [ -z "$DELIVERY" ]; then
+  echo "error: a ship brief needs an explicit delivery posture: pass --delivery rapid-local or --delivery peer-ship" >&2
+  echo "when the captain has not supplied one, ask before dispatch (AGENTS.md task lifecycle); do not guess" >&2
+  exit 1
+fi
 
 if [ "$HERDR_LAB" -eq 1 ]; then
 HERDR_LAB_HELPER=$(shell_quote "$FM_ROOT/bin/fm-herdr-lab.sh")
@@ -274,36 +317,47 @@ echo "scaffolded: $BRIEF (scout; replace {TASK})"
 exit 0
 fi
 
-# Ship task: shape Setup / Rule 1 / Definition of done by the project's delivery mode.
+# Ship task: shape Setup / Rule 1 / Definition of done by the delivery posture and
+# the project's delivery mode.
 # yolo does not affect the brief (it governs firstmate's approval behaviour), so discard it.
 PROJECT_NAME=$(fm_project_name_from_arg "$REPO" 2>/dev/null || basename "$REPO")
 read -r MODE _ <<EOF
 $("$FM_ROOT/bin/fm-project-mode.sh" "$PROJECT_NAME")
 EOF
 
+if [ "$DELIVERY" = peer-ship ] && [ "$MODE" = local-only ]; then
+  echo "error: delivery posture peer-ship needs a remote-capable delivery mode, but project $PROJECT_NAME is registered local-only; use rapid-local or change the project mode" >&2
+  exit 1
+fi
+
+# rapid-local rides the guarded local-only delivery machinery whatever the
+# project's registered mode is; peer-ship keeps the registered remote mode.
+EFFECTIVE_MODE=$MODE
+if [ "$DELIVERY" = rapid-local ]; then
+  EFFECTIVE_MODE=local-only
+  SETUP2=""
+  RULE1="1. Never push to any remote and never open a PR. Work only on your \`fm/$ID\` branch; firstmate handles the merge into local \`main\`."
+  DOD=$(cat <<EOF
+# Definition of done
+This task ships **rapid-local**: local delivery in your isolated worktree - no remote push, no PR, no pipeline.
+The task is complete only when committed on your branch \`fm/$ID\`. Do NOT push, do NOT open a PR, do NOT merge.
+Run the focused validation that actually exercises your change (the targeted tests, lint, or build for the code you touched) and put the evidence in your done report.
+Keep your branch a clean fast-forward onto the current default branch - if \`main\` has advanced, rebase onto it so the eventual merge stays a fast-forward.
+When it is implemented, validated, and committed, append \`done: ready in branch fm/$ID\` to the status file and stop.
+Firstmate then reviews your branch diff, the captain approves, and firstmate merges it into local \`main\`.
+EOF
+)
+else
 case "$MODE" in
   direct-PR)
     SETUP2=""
     RULE1='1. Never push to the default branch (push only your `fm/'"$ID"'` branch). Never merge a PR.'
     DOD=$(cat <<EOF
 # Definition of done
-This project ships **direct-PR**: you raise the PR yourself, without the no-mistakes pipeline.
+This task ships **peer-ship** through the registered **direct-PR** mode: you raise the PR yourself, without the no-mistakes pipeline.
 The task is complete only when committed on your branch.
 When it is implemented and committed, push your branch and open a PR with \`gh-axi\`, then append \`done: PR {url}\` to the status file and stop.
 Do NOT run /no-mistakes. The captain reviews and merges the PR; firstmate relays it.
-EOF
-)
-    ;;
-  local-only)
-    SETUP2=""
-    RULE1="1. Never push to any remote and never open a PR. Work only on your \`fm/$ID\` branch; firstmate handles the merge into local \`main\`."
-    DOD=$(cat <<EOF
-# Definition of done
-This project ships **local-only**: no remote, no PR, no pipeline.
-The task is complete only when committed on your branch \`fm/$ID\`. Do NOT push, do NOT open a PR, do NOT merge.
-Keep your branch a clean fast-forward onto the current default branch - if \`main\` has advanced, rebase onto it so the eventual merge stays a fast-forward.
-When it is implemented and committed, append \`done: ready in branch fm/$ID\` to the status file and stop.
-Firstmate then reviews your branch diff, the captain approves, and firstmate merges it into local \`main\`.
 EOF
 )
     ;;
@@ -313,6 +367,7 @@ EOF
     RULE1='1. Never push to the default branch. Never merge a PR.'
     DOD=$(cat <<EOF
 # Definition of done
+This task ships **peer-ship** through the registered **no-mistakes** pipeline: independent review, full validation, and the PR gate.
 The task is complete only when committed on your branch.
 When you believe it is complete, append \`done: {summary}\` to the status file and stop.
 Firstmate will then instruct you to run /no-mistakes to validate and ship a PR.
@@ -331,6 +386,11 @@ EOF
 )
     ;;
 esac
+fi
+
+# Durable delivery posture record: read by fm-spawn.sh, which persists it as
+# delivery= in the task's meta (docs/configuration.md "Delivery posture").
+printf '%s\n' "$DELIVERY" > "$DATA/$ID/delivery"
 
 cat > "$BRIEF" <<EOF
 You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.
@@ -381,4 +441,4 @@ Keep it proportionate: skip \`AGENTS.md\` edits for trivial tasks that produced 
 
 $DOD
 EOF
-echo "scaffolded: $BRIEF (ship, mode=$MODE; replace {TASK})"
+echo "scaffolded: $BRIEF (ship, delivery=$DELIVERY, mode=$EFFECTIVE_MODE; replace {TASK})"

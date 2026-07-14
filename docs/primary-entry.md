@@ -10,7 +10,7 @@ The script header owns the exact flags and parsing rules; this document owns the
 firstmate claude          # resume the most recent primary conversation for this repo
 firstmate codex           # same, on codex
 firstmate claude --new    # start a fresh session that greets the captain with a recap
-firstmate codex --model gpt-5.5   # extra arguments forward to the harness verbatim
+firstmate codex --model gpt-5.6-terra   # extra arguments forward to the harness verbatim
 ```
 
 From any directory, the command anchors its cwd to the firstmate repository root before launching, so the harness loads this repo's tracked project hooks and resumes the conversation history recorded for this repository.
@@ -22,6 +22,9 @@ When there is no prior session to resume, both harnesses fail fast with their ow
 It deliberately inspects no undocumented transcript formats and never auto-falls-back to a fresh session, so a resume failure can never silently fork a second conversation.
 
 Autonomy posture: codex launches carry `--yolo` (the codex alias for `--dangerously-bypass-approvals-and-sandbox`), the standing captain-approved posture for this local primary entry; claude launches intentionally carry no bypass-permissions flag.
+
+Coordinator posture: a claude launch with neither `--model` nor `--effort` among the forwarded arguments appends the recommended pair, `--model claude-fable-5 --effort medium`; supplying either axis disables the injection, and codex launches are never touched.
+`docs/configuration.md` "Coordinator posture" owns that default across the primary entry and secondmate spawns.
 
 ## Fleet recap on fresh or cleared context
 

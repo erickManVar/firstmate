@@ -91,13 +91,14 @@ data/                personal fleet records; LOCAL, gitignored as a whole
   projects.md        thin fleet navigation registry; firstmate-private, parsed by fm-project-mode.sh (section 6)
   secondmates.md      secondmate routing table; firstmate-private, maintained by fm-home-seed.sh (section 6)
   <id>/brief.md      per-task crewmate brief, or per-secondmate charter brief when kind=secondmate
+  <id>/delivery      durable rapid-local|peer-ship delivery posture for a ship task, written by fm-brief.sh or fm-promote.sh and read by fm-spawn.sh (section 7; docs/configuration.md "Delivery posture")
   <id>/report.md     scout task deliverable, written by the crewmate; survives teardown
 projects/            legacy local project catalog and always-internal operational dir; gitignored; READ-ONLY for you
 state/               volatile runtime signals; gitignored
   <id>.status        appended by crewmates: "<state>: <note>" wake-event lines, not current-state truth
   <id>.turn-ended    touched by turn-end hooks
   <id>.grok-turnend-token   firstmate-owned grok hook registry token for the task; removed by teardown
-  <id>.meta          written by fm-spawn: window=, worktree=, project=, harness=, model=, effort=, kind=, mode=, yolo=, tasktmp=; kind=secondmate also records home= and projects=; a non-default runtime backend records further backend-specific fields (docs/configuration.md "Runtime backend"; bin/fm-backend.sh, section 8); fm-pr-check, including through fm-pr-merge, appends pr= and GitHub's pr_head= when available; fm-x-link appends x_request=, x_request_ts=, x_followups=, and optional x_platform=/x_reply_max_chars= for an X-mode-originated task (section 14)
+  <id>.meta          written by fm-spawn: window=, worktree=, project=, harness=, model=, effort=, kind=, mode=, yolo=, tasktmp=, plus delivery= for a ship task with a recorded delivery posture; kind=secondmate also records home= and projects=; a non-default runtime backend records further backend-specific fields (docs/configuration.md "Runtime backend"; bin/fm-backend.sh, section 8); fm-pr-check, including through fm-pr-merge, appends pr= and GitHub's pr_head= when available; fm-x-link appends x_request=, x_request_ts=, x_followups=, and optional x_platform=/x_reply_max_chars= for an X-mode-originated task (section 14)
   <id>.check.sh      optional slow poll you write per task (e.g. merged-PR check)
   x-watch.check.sh   generated X-mode relay poll shim; present only when opted in (section 14)
   x-inbox/           generated X-mode pending mention payloads; fmx-respond drains it (section 14)
@@ -222,6 +223,7 @@ Secondmates can run on a different harness than crewmates.
 An explicit per-spawn harness still overrides either kind, and every secondmate respawn re-resolves from the file, so the split is durable across restarts without being recorded per-task.
 
 `config/secondmate-harness` can also pin a model/effort for the secondmate agent in one line (`<harness> [<model>] [<effort>]`); format, accessors, and inheritance exceptions live in `secondmate-provisioning` (load before creating/seeding/launching/recovering a secondmate).
+With no pin from any source, a claude coordinator - the primary via `bin/firstmate claude` or a secondmate spawn - launches on the recommended Fable 5 medium posture; `docs/configuration.md` "Coordinator posture" owns that default, and explicit codex coordinators are untouched.
 
 `config/crew-dispatch.json`, `config/crew-harness`, `config/backlog-backend`, and `config/projects-root` are inherited into every secondmate home; `config/secondmate-harness` is not, because secondmates never spawn secondmates.
 `secondmate-provisioning` owns the propagation timing, mechanism, the literal-file inheritance nuance, and `bin/fm-config-push.sh`.
@@ -345,6 +347,7 @@ It sweeps the current session for uncaptured durable knowledge, routes findings 
 - `local-only` - local branch, no remote, no PR; firstmate reviews the diff, the captain approves, firstmate merges to local `main` (section 7).
 
 Orthogonal to mode is an optional `+yolo` flag (`[direct-PR +yolo]`), default off and **not recommended**: with `yolo` on, firstmate makes the approval decisions itself instead of asking the captain (section 7). When the captain adds a project without saying, default to `no-mistakes` with yolo off; only set a faster mode or `+yolo` on the captain's explicit say-so.
+Also orthogonal: each meaningful ship task additionally records a per-task delivery posture at dispatch - `rapid-local` or `peer-ship` - which can force the guarded local path over the registered mode (section 7).
 
 **Clone existing:** `git clone <url> projects/<name>`, add its registry line with the chosen mode, then initialize only if the mode is `no-mistakes`.
 
@@ -406,6 +409,11 @@ Then classify the shape:
 - **Ship** (the default): the deliverable is a change to the project. It ships through the project's delivery mode: `no-mistakes`, `direct-PR`, or `local-only`.
 - **Scout:** the deliverable is knowledge - an investigation, a plan, a bug reproduction, an audit. It ends in a report at `data/<id>/report.md`, never a PR. When the captain asks "what's wrong", "how would we", or "find out why" about a project, that is a scout task; dispatch it instead of doing the digging yourself.
 
+For ship work, resolve the delivery posture before dispatch: **rapid-local** (local delivery in the isolated worktree with focused validation, firstmate diff review, captain approval, and a local merge - no PR) or **peer-ship** (the project's registered remote mode: independent worktree, full validation, and the PR gate).
+A posture the captain already supplied wins; otherwise ask the captain one line before dispatching meaningful ship work - never guess a posture.
+The posture is recorded at scaffold time (`bin/fm-brief.sh ... --delivery <rapid-local|peer-ship>`, which fails closed without it) and persisted into task meta by `fm-spawn`, so it survives restart and is visible to the crewmate; `docs/configuration.md` "Delivery posture" owns the record and mapping, including that `peer-ship` is refused for `local-only` projects and that neither posture ever edits a canonical repo directly.
+Scouts have no posture, and task records without one (pre-policy) keep their registered project-mode behavior.
+
 Then classify readiness:
 
 - **Dispatchable:** no overlap with in-flight tasks. Dispatch immediately. There is no concurrency cap.
@@ -423,7 +431,7 @@ Load `harness-adapters` before spawning or recovering any direct report so trust
 ```sh
 bin/fm-spawn.sh <id> <project>                   # bare name for a registered single-repo project
 bin/fm-spawn.sh <id> <project>/<repo>            # explicit repo in a multi-repo project container
-bin/fm-spawn.sh <id> <project>/<repo> --harness codex --model gpt-5.5 --effort high   # explicit profile axes
+bin/fm-spawn.sh <id> <project>/<repo> --harness codex --model gpt-5.6-sol --effort high   # explicit profile axes
 bin/fm-spawn.sh <id> <project>/<repo> --backend <tmux|herdr|zellij|orca|cmux>   # explicit runtime backend (docs/configuration.md "Runtime backend")
 bin/fm-spawn.sh <id> <project>/<repo> --scout    # scout task; records kind=scout in meta
 bin/fm-spawn.sh <id> [<firstmate-home>] --secondmate   # launch or recover a persistent secondmate in its home
@@ -452,7 +460,9 @@ A secondmate-reported merged PR is exactly the case the fleet-sync-on-merge wake
 
 ### Delivery modes and yolo
 
-A ship task's path from `done` to landed on `main` is set by the project's `mode` (recorded in meta; section 6); `yolo` decides who approves. The Validate / PR ready / Ship teardown stages below are written for the `no-mistakes` path; the other modes diverge:
+A ship task's path from `done` to landed on `main` is set by its effective `mode` (recorded in meta; section 6); `yolo` decides who approves.
+The recorded delivery posture selects that effective mode: `rapid-local` forces `local-only` whatever the project registers, `peer-ship` keeps the registered remote mode, and a task with no recorded posture uses the registered mode directly.
+The Validate / PR ready / Ship teardown stages below are written for the `no-mistakes` path; the other modes diverge:
 
 - **no-mistakes** - the stages below as written: no-mistakes validation pipeline -> PR -> captain merge.
 - **direct-PR** - no pipeline. The crewmate pushes and opens the PR itself (its brief says so) and reports `done: PR <url>`. Skip the Validate step and go straight to PR ready (run `fm-pr-check`, relay the PR). Teardown uses the normal landed-work check.
@@ -543,7 +553,7 @@ A scout task follows Intake, Spawn, and Supervise exactly as above - scaffold th
 - Tear down immediately - no merge gate. `bin/fm-teardown.sh` allows a scout worktree's scratch commits and dirty files once the report exists; if the report is missing, it refuses, because the findings are the work product.
 - Record it in Done with the report path instead of a PR link using `tasks-axi done` when the default tasks-axi backend is active and compatible, otherwise hand-edit `data/backlog.md` and keep Done to the 10 most recent, then re-evaluate the queue and dispatch only queued work whose blockers are gone and whose time/date gate, if any, has arrived.
 
-**Promotion.** When a scout's findings reveal shippable work (a reproduced bug with a clear fix) and the captain wants it shipped, promote the task in place instead of respawning: run `bin/fm-promote.sh <id>` (flips `kind=` to ship in meta, restoring teardown's full protection), then from an active firstmate session send the crewmate its ship instructions with `FM_HOME=<this-firstmate-home> bin/fm-send.sh` unless `FM_HOME` is already set to the active firstmate home - inventory scratch state, reset to a clean default-branch base, carry over only intended fix changes, create branch `fm/<id>`, implement, and report `done` according to the project's delivery mode.
+**Promotion.** When a scout's findings reveal shippable work (a reproduced bug with a clear fix) and the captain wants it shipped, promote the task in place instead of respawning: run `bin/fm-promote.sh <id> --delivery <rapid-local|peer-ship>` (flips `kind=` to ship in meta, records the captain's delivery posture, and restores teardown's full protection; it fails closed without the posture, so ask the captain first exactly as at intake), then from an active firstmate session send the crewmate its ship instructions with `FM_HOME=<this-firstmate-home> bin/fm-send.sh` unless `FM_HOME` is already set to the active firstmate home - inventory scratch state, reset to a clean default-branch base, carry over only intended fix changes, create branch `fm/<id>`, implement, and report `done` according to the recorded delivery posture and mode.
 The crewmate keeps its worktree, loaded context, and repro, but the ship branch must start from a clean base with only intended changes; scratch commits and debug edits from the scout phase never ride along.
 The repro becomes the regression test.
 From there the task is an ordinary ship task through its mode-specific validation, PR or local merge, and Teardown.
@@ -733,9 +743,9 @@ Correct or delete stale free-form notes the moment you catch them, and put durab
 
 ## 11. Crewmate briefs
 
-Scaffold with `bin/fm-brief.sh <id> <repo-name>` - it writes `data/<id>/brief.md` with the standard contract (branch setup, status-reporting protocol, push/merge rules, definition of done) and all paths filled in.
+Scaffold with `bin/fm-brief.sh <id> <repo-name> --delivery <rapid-local|peer-ship>` - it writes `data/<id>/brief.md` with the standard contract (branch setup, status-reporting protocol, push/merge rules, definition of done) and all paths filled in, and records the ship task's delivery posture durably (section 7); the flag is required for ship briefs and rejected for scout and secondmate scaffolds.
 The ship-brief Setup opens with a worktree-isolation assertion ahead of the branch step: the crewmate confirms it is in its own disposable task worktree, not the primary checkout, and stops with `blocked: launched in primary checkout, not an isolated worktree` if not - the upstream half of the worktree-tangle guard (section 8).
-For a ship task the definition of done is shaped by the project's delivery mode (section 6): `no-mistakes` stops after the implementation commit, then firstmate triggers the harness-appropriate no-mistakes validation pipeline; `direct-PR` has the crewmate push and open the PR itself, and `local-only` has it stop at "ready in branch" for firstmate to review and merge locally.
+For a ship task the definition of done is shaped by the delivery posture first, then the project's delivery mode (sections 6 and 7): `rapid-local` has the crewmate run focused validation and stop at "ready in branch" for firstmate to review and merge locally; under `peer-ship`, `no-mistakes` stops after the implementation commit, then firstmate triggers the harness-appropriate no-mistakes validation pipeline, while `direct-PR` has the crewmate push and open the PR itself.
 The no-mistakes brief points to no-mistakes' version-matched guidance and keeps only firstmate-specific wrapper rules for `ask-user` escalation, `--yes` avoidance, and the CI-green done line.
 The scaffold reads the mode via `fm-project-mode.sh`, so you do not pass it.
 Ship briefs also include the project-memory contract: run `bin/fm-ensure-agents-md.sh` when the project already has agent-memory files or when the task produced durable project-intrinsic knowledge, then record proportionate learnings in `AGENTS.md`.
