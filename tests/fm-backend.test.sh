@@ -764,7 +764,7 @@ run_spawn_case() {  # <bin-root> <fakebin> <log> <state> <data> <config> <proj> 
   : > "$log"
   env PATH="$fb:$PATH" FM_ROOT_OVERRIDE="$bin" \
     FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
-    FM_PROJECTS_OVERRIDE="$TMP_ROOT/unused-projects" \
+    FM_PROJECTS_OVERRIDE='' \
     FM_SPAWN_NO_GUARD=1 TMUX="fake,1,0" FM_TMUX_LOG="$log" \
     "$bin/bin/fm-spawn.sh" "$@"
 }
