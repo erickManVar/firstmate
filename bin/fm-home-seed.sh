@@ -9,9 +9,11 @@
 #       no live process and is never recycled until the lease is released with
 #       "treehouse return". With the legacy local catalog, projects are cloned
 #       into the secondmate home's projects/ directory. With config/projects-root,
-#       the inherited external catalog is validated and referenced without clone,
-#       initialization, synchronization, or rollback ownership. That project
-#       list is non-exclusive access data. Pass --no-projects
+#       every explicitly registered repo in each non-git project container is
+#       validated and referenced without clone, initialization, synchronization,
+#       or rollback ownership. The home may be the container's real sibling
+#       `.secondmate/` directory. That project list is non-exclusive access data.
+#       Pass --no-projects
 #       instead of a project list to seed a project-less home for a domain whose
 #       subject is the firstmate repo itself; it is mutually exclusive with a
 #       project list, and omitting both still fails loudly. A project-less seed
@@ -570,14 +572,11 @@ EOF
 }
 
 validate_seed_project() {
-  local project=$1 src mode url
+  local project=$1 src mode url repos
   fm_project_name_valid "$project" || {
     echo "error: unsafe project name: $project" >&2
     return 1
   }
-  src=$(fm_project_path "$project") || return 1
-  [ -d "$src" ] || { echo "error: project $project not found at $src" >&2; return 1; }
-  git -C "$src" rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "error: project $project is not a git repo" >&2; return 1; }
   read -r mode _ <<EOF
 $(FM_HOME="$FM_HOME" FM_DATA_OVERRIDE="$DATA" "$FM_ROOT/bin/fm-project-mode.sh" "$project")
 EOF
@@ -585,14 +584,29 @@ EOF
     echo "error: project $project is local-only; secondmate routes support only no-mistakes and direct-PR projects" >&2
     return 1
   fi
-  url=$(git -C "$src" remote get-url origin 2>/dev/null || true)
-  [ -n "$url" ] || { echo "error: project $project is $mode but has no origin remote" >&2; return 1; }
-  if [ "$PROJECTS_MODE" = shared-external ] && [ "$mode" = no-mistakes ]; then
-    git -C "$src" remote get-url no-mistakes >/dev/null 2>&1 || {
-      echo "error: shared project $project is not initialized for no-mistakes; refusing to mutate the external checkout" >&2
+  repos=$(fm_project_repo_paths "$project") || return 1
+  while IFS= read -r src; do
+    [ -n "$src" ] || continue
+    [ -d "$src" ] || { echo "error: project $project repo not found at $src" >&2; return 1; }
+    git -C "$src" rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "error: project $project repo is not a git repo: $src" >&2; return 1; }
+    url=$(git -C "$src" remote get-url origin 2>/dev/null || true)
+    if [ -z "$url" ]; then
+      if [ "$PROJECTS_MODE" = legacy-local ]; then
+        echo "error: project $project is $mode but has no origin remote" >&2
+      else
+        echo "error: project $project repo $src is $mode but has no origin remote" >&2
+      fi
       return 1
-    }
-  fi
+    fi
+    if [ "$PROJECTS_MODE" = shared-external ] && [ "$mode" = no-mistakes ]; then
+      git -C "$src" remote get-url no-mistakes >/dev/null 2>&1 || {
+        echo "error: shared project $project repo $src is not initialized for no-mistakes; refusing to mutate the external checkout" >&2
+        return 1
+      }
+    fi
+  done <<EOF
+$repos
+EOF
 }
 
 SEED_ROLLBACK_ACTIVE=0

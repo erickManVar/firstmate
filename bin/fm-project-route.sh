@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Read-only lookup from a project name or checkout path to registered secondmates.
+# Read-only lookup from a project name, container, or repo path to secondmates.
 #
 # Usage: fm-project-route.sh [<project-name-or-path>]
-# With no argument, infer the project name from the current Git top-level or cwd.
+# With no argument, infer the registered project from the current Git top-level
+# or from a non-git project-container cwd.
 # One exact projects: match prints the supported fm-send command.
 # Multiple exact matches are reported without choosing one because secondmate
 # project access is deliberately non-exclusive.
@@ -32,17 +33,13 @@ esac
 [ $# -le 1 ] || { usage; exit 1; }
 
 if [ $# -eq 1 ]; then
-  project=${1%/}
-  project=${project##*/}
+  input=${1%/}
 else
-  top=$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)
-  project=${top%/}
-  project=${project##*/}
+  input=$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)
 fi
-
-fm_project_name_valid "$project" || {
-  echo "error: unsafe project name: $project" >&2
-  exit 1
+project=$(fm_project_name_from_arg "$input") || {
+  echo "no registered project context for $input" >&2
+  exit 2
 }
 [ -f "$REG" ] || {
   echo "no secondmate route for $project: $REG is absent" >&2

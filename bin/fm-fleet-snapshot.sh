@@ -9,8 +9,8 @@
 # Top-level fields:
 #   schema: stable schema id.
 #   fm_home: resolved operational home.
-#   roots: resolved root/config/data/state/projects directories plus
-#     projects_mode=legacy-local|shared-external.
+#   roots: resolved root/config/data/state directories plus the legacy project
+#     root or shared project-container base and projects_mode value.
 #   backlog: {path,present,records[]} where records are ordered as written in
 #     data/backlog.md and cover In flight, Queued, and Done.
 #     Canonical tasks-axi rows are structured; free-form non-empty lines in

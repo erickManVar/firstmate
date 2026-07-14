@@ -22,8 +22,9 @@ It is never auto-detected.
 First run: before spawn mutates any repo or worktree state, firstmate runs `orca status --json` and requires the app to report `reachable=true` and `state="ready"` - start the Orca app and wait for it to finish loading before spawning.
 Spawn fails closed if the runtime is not ready.
 The first spawn against a given project also auto-registers that project's repo in Orca (`orca repo add --path`) if it is not already registered - no manual registration step is needed.
-Repository placement is independent of the Orca runtime backend: `config/projects-root` may resolve a canonical shared checkout, and Orca receives that resolved absolute path before creating its isolated task worktree.
-Opening a canonical project directly in Orca can use `bin/fm-project-route.sh` from the firstmate checkout to discover its registered secondmate and the supported `fm-send` command without placing operational files in the project.
+Repository placement is independent of the Orca runtime backend: `config/projects-root` may select a registry-driven project-container base, and Orca receives one explicit registered repo path before creating its isolated task worktree.
+`~/orca/workspaces` is Orca's task-worktree area and is never a canonical project, container, or repo input.
+Opening a non-git project container or one of its registered repos directly in Orca can use `bin/fm-project-route.sh` from the firstmate checkout to discover the project, its colocated secondmate, and the supported `fm-send` command without placing extra operational files in a repo.
 
 Watching and attaching: Orca owns both the worktree and the terminal for its tasks, so there is nothing to attach to outside the Orca app itself - open the app and find the terminal for the task (recorded as `terminal=<handle>` in the task's meta, with `window=fm-<id>` as the shared firstmate alias).
 You do not need to open the app for routine supervision: from an active firstmate session, `bin/fm-peek.sh <id>` reads a task's terminal without opening Orca, and `FM_HOME=<this-firstmate-home> bin/fm-send.sh <id> "<text>"` steers it unless `FM_HOME` is already set to the active firstmate home (the stable `fm-<id>` alias also works; Enter and Ctrl-C are supported; Escape is not).

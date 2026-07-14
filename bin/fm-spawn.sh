@@ -55,10 +55,13 @@
 #   provisioned firstmate home; the default is kind=ship.
 #   Before a secondmate launch, the home is locally fast-forwarded to the primary
 #   default-branch commit when safe; skipped syncs warn and launch unchanged.
+#   A bare registered project resolves only when it has one repo. Multi-repo
+#   project containers require the `<project>/<repo>` selector; explicit paths
+#   remain supported for deliberate non-registry workflows.
 #   Ship/scout spawns refuse to launch unless the resolved task path is a real
 #   git worktree root distinct from the primary project checkout.
 # Batch dispatch: pass one or more `id=repo` pairs instead of a single <id> <project>, e.g.
-#     fm-spawn.sh fix-a-k3=projects/foo add-b-q7=projects/bar [--scout]
+#     fm-spawn.sh fix-a-k3=product/api add-b-q7=product/web [--scout]
 #   Each pair re-execs this script in single-task mode, so the single path stays the only
 #   source of truth; shared --scout/--harness/--model/--effort/--backend applies to every pair.
 #   If config/crew-dispatch.json exists, shared --harness is required for crewmate
@@ -489,21 +492,7 @@ resolved_existing_dir() {
 }
 
 resolve_project_dir_arg() {
-  local path=$1 name
-  case "$path" in
-    projects/*)
-      name=${path#projects/}
-      fm_project_path "$name"
-      ;;
-    */*) printf '%s\n' "$path" ;;
-    *)
-      if fm_project_is_registered "$path"; then
-        fm_project_path "$path"
-      else
-        printf '%s\n' "$path"
-      fi
-      ;;
-  esac
+  fm_project_resolve_arg "$1"
 }
 
 path_is_ancestor_of() {
@@ -651,6 +640,7 @@ if [ "$KIND" = secondmate ]; then
   fi
 else
   PROJ_ABS="$(cd "$(resolve_project_dir_arg "$PROJ")" && pwd)"
+  PROJECT_NAME=$(fm_project_name_from_arg "$PROJ" 2>/dev/null || fm_project_name_for_path "$PROJ_ABS" 2>/dev/null || basename "$PROJ_ABS")
   WT=""
   BRIEF="$DATA/$ID/brief.md"
 fi
@@ -993,9 +983,8 @@ if [ "$KIND" = secondmate ]; then
   YOLO=off
   SECONDMATE_PROJECTS=$(secondmate_registry_value "$ID" projects || true)
 else
-  PROJ_NAME=$(basename "$PROJ_ABS")
   read -r MODE YOLO <<EOF
-$("$FM_ROOT/bin/fm-project-mode.sh" "$PROJ_NAME")
+$("$FM_ROOT/bin/fm-project-mode.sh" "$PROJECT_NAME")
 EOF
 fi
 

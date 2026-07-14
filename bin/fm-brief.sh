@@ -6,13 +6,15 @@
 # description, acceptance criteria, and context, and may adjust other sections
 # when the task genuinely deviates (e.g. working an existing external PR instead
 # of shipping a new one).
-# Usage: fm-brief.sh <task-id> <repo-name> [--scout] [--herdr-lab]
+# Usage: fm-brief.sh <task-id> <project-or-project/repo> [--scout] [--herdr-lab]
 #        fm-brief.sh <task-id> --secondmate {<project>...|--no-projects}
 #   --scout writes the scout contract instead: the deliverable is a report at
 #   data/<task-id>/report.md (no branch, no push, no PR) and the worktree is scratch.
-#   --secondmate writes a persistent secondmate charter. The project list
-#   is cloned into the secondmate home, while the natural-language scope
-#   tells the main firstmate when to route work there; routine churn stays in its own home;
+#   --secondmate writes a persistent secondmate charter. In legacy mode the
+#   project list is cloned into the secondmate home. In shared-container mode
+#   every explicitly registered sibling repo is referenced in place. The
+#   natural-language scope tells the main firstmate when to route work there;
+#   routine churn stays in its own home;
 #   captain-relevant escalations and marked from-firstmate replies append to this
 #   home's status file.
 #   --no-projects writes a project-less charter for a domain whose subject is the
@@ -130,7 +132,7 @@ if [ "$NO_PROJECTS" -eq 1 ]; then
 else
   PROJECT_ACCESS_BODY=$(printf '%s\n' "$SECONDMATE_PROJECTS" | tr ' ' '\n' | sed 's/^/- /')
   if [ "$PROJECTS_MODE" = shared-external ]; then
-    PROJECT_ACCESS_NOTE="The projects above resolve through the inherited shared project catalog. Treat the canonical checkouts as primary-owned and delegate changes through isolated task worktrees."
+    PROJECT_ACCESS_NOTE="The projects above resolve through the inherited project-container registry. Treat every listed canonical repo as primary-owned and delegate changes through isolated task worktrees."
   else
     PROJECT_ACCESS_NOTE="The projects above are local clones for work you supervise; they are not an exclusive ownership claim."
   fi
@@ -274,8 +276,9 @@ fi
 
 # Ship task: shape Setup / Rule 1 / Definition of done by the project's delivery mode.
 # yolo does not affect the brief (it governs firstmate's approval behaviour), so discard it.
+PROJECT_NAME=$(fm_project_name_from_arg "$REPO" 2>/dev/null || basename "$REPO")
 read -r MODE _ <<EOF
-$("$FM_ROOT/bin/fm-project-mode.sh" "$REPO")
+$("$FM_ROOT/bin/fm-project-mode.sh" "$PROJECT_NAME")
 EOF
 
 case "$MODE" in

@@ -3,7 +3,7 @@
 # extensible set of LOCAL (gitignored) config items down into each secondmate
 # home's config/, so a secondmate's OWN crewmates inherit the primary's settings
 # (e.g. dispatch and harness policy, backlog backend, and an optional shared
-# projects-root catalog).
+# project-container base).
 #
 # Usage: . bin/fm-config-inherit-lib.sh   (no FM_* setup required)
 #

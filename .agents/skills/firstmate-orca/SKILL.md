@@ -14,6 +14,8 @@ It does not replace `AGENTS.md`, `docs/orca-backend.md`, or `harness-adapters`.
 Orca is a runtime backend, not an agent harness.
 The runtime backend owns the task endpoint and, for Orca, the task worktree.
 The harness is the agent process launched inside that endpoint, such as `claude`, `codex`, `opencode`, `pi`, or `grok`.
+Repository placement is a separate registry concern: Orca's `workspaces` directory contains task worktrees and must never be treated as a canonical project container or repo.
+When operating from a directly opened project container or registered repo, use `bin/fm-project-route.sh` to recover the owning project and secondmate route.
 Load `harness-adapters` for harness-specific launch, interrupt, resume, trust-dialog, and skill-invocation facts.
 
 Implementation details, metadata fields, teardown guarantees, limitations, and smoke evidence live in `docs/orca-backend.md`.
