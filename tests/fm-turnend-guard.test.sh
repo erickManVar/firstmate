@@ -44,6 +44,17 @@ test_predicate_unhealthy_no_beacon() {
   pass "fm_supervision_unhealthy: true with in-flight task and no beacon ever"
 }
 
+test_predicate_ignores_secondmate_coordinator_records() {
+  local state="$TMP_ROOT/pred-secondmate-only/state"
+  mkdir -p "$state"
+  fm_write_meta "$state/domain.meta" 'kind=secondmate' 'window=firstmate:fm-domain'
+  if fm_supervision_unhealthy "$state" 300; then
+    fail "persistent secondmate coordinator must not count as primary work in flight"
+  fi
+  [ "$FM_SUP_IN_FLIGHT" -eq 0 ] || fail "expected secondmate-only state to count as zero, got $FM_SUP_IN_FLIGHT"
+  pass "fm_supervision_unhealthy: persistent secondmate records are excluded from primary in-flight work"
+}
+
 test_predicate_unhealthy_stale_beacon() {
   local state="$TMP_ROOT/pred-stale/state"
   mkdir -p "$state"
@@ -202,6 +213,16 @@ test_hook_silent_when_no_work_in_flight() {
   expect_code 0 "$status" "hook must exit 0 with no in-flight work"
   [ -z "$out" ] || fail "hook produced output with no in-flight work: $out"
   pass "fm-turnend-guard: silent no-op with nothing in flight"
+}
+
+test_hook_silent_when_only_secondmates_are_registered() {
+  local dir out status
+  dir=$(make_primary_dir "$TMP_ROOT/hook-secondmate-records-only")
+  fm_write_meta "$dir/state/domain.meta" 'kind=secondmate' 'window=firstmate:fm-domain'
+  out=$(run_hook "$dir" false); status=$?
+  expect_code 0 "$status" "hook must stay silent when only persistent secondmate records exist"
+  [ -z "$out" ] || fail "secondmate-only primary state produced guard output: $out"
+  pass "fm-turnend-guard: persistent secondmate records do not trigger the primary Stop guard"
 }
 
 test_hook_blocks_when_fresh_beacon_has_no_live_lock() {
@@ -886,10 +907,12 @@ test_grok_hook_invokes_adapter() {
 
 test_predicate_healthy_no_inflight
 test_predicate_unhealthy_no_beacon
+test_predicate_ignores_secondmate_coordinator_records
 test_predicate_unhealthy_stale_beacon
 test_predicate_healthy_fresh_beacon
 test_predicate_queue_pending_flag
 test_hook_silent_when_no_work_in_flight
+test_hook_silent_when_only_secondmates_are_registered
 test_hook_blocks_when_fresh_beacon_has_no_live_lock
 test_hook_blocks_when_dead_lock_has_fresh_beacon
 test_hook_silent_with_live_lock_and_fresh_beacon

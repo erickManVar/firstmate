@@ -127,6 +127,8 @@ This does not relax protection for any other untracked file.
 An existing linked-worktree home that predates this rule advances through its marker-only state during its next bootstrap or spawn local sync, after which Git ignores the marker normally.
 A standalone-clone home cannot receive a primary-local commit through that no-fetch sync, so it receives the rule through `/updatefirstmate`'s origin refresh instead.
 
+Use `bin/fm-secondmate-fleet.sh status` to inspect every registered persistent coordinator. Use `bin/fm-secondmate-fleet.sh ensure` when you want every project-bearing coordinator live: it attaches to healthy coordinators, recovers only confidently dead ones, and fails closed for an unproven endpoint. Persistent homes do not count as primary in-flight work; each live coordinator guards and supervises its own workers from its own `FM_HOME`.
+
 ## FM_HOME
 
 `FM_HOME` selects the operational home for one firstmate instance.

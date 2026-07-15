@@ -20,7 +20,7 @@ fm_sup_stat_mtime() {
 
 # fm_supervision_status <state-dir> [grace-seconds]
 # Populates, for the state dir at $1:
-#   FM_SUP_IN_FLIGHT      count of state/*.meta (in-flight tasks)
+#   FM_SUP_IN_FLIGHT      count of actionable child-task metas (in-flight work)
 #   FM_SUP_WATCHER_FRESH  true/false - a watcher beacon within the grace window
 #   FM_SUP_BEACON_DESC    human-readable beacon age, for banners ("never" if absent)
 #   FM_SUP_QUEUE_PENDING  true/false - state/.wake-queue has unread records
@@ -35,6 +35,11 @@ fm_supervision_status() {
 
   for meta in "$state"/*.meta; do
     [ -e "$meta" ] || continue
+    # A secondmate record belongs to this primary only as a durable routing and
+    # recovery handle. The coordinator supervises its own children from its own
+    # FM_HOME, so treating the record as primary work makes an idle fleet block
+    # every turn merely because persistent homes exist.
+    grep -q '^kind=secondmate$' "$meta" 2>/dev/null && continue
     FM_SUP_IN_FLIGHT=$((FM_SUP_IN_FLIGHT + 1))
   done
 

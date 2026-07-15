@@ -33,6 +33,10 @@
 #   fm-home-seed.sh validate
 #       Refuse duplicate ids, duplicate homes, and nested or overlapping homes in
 #       data/secondmates.md.
+#   fm-home-seed.sh routes
+#       Validate the registry, then print one machine-readable route per line as
+#       <id><TAB><absolute-home><TAB><comma-separated-projects>. This is the
+#       read-only registry interface for fleet-level coordinator operations.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -52,6 +56,7 @@ SUB_HOME_MARKER=".fm-secondmate-home"
 usage() {
   echo "usage: fm-home-seed.sh <id> <home|-> {<project>...|--no-projects}" >&2
   echo "       fm-home-seed.sh validate" >&2
+  echo "       fm-home-seed.sh routes" >&2
 }
 
 registry_home_for_line() {
@@ -309,6 +314,24 @@ validate_registry() {
   }
   rm -f "$tmp"
   return 0
+}
+
+print_routes() {
+  local line id home projects
+  validate_registry || return 1
+  [ -f "$REG" ] || return 0
+  while IFS= read -r line; do
+    case "$line" in
+      "- "*)
+        id=${line#- }
+        id=${id%% *}
+        home=$(printf '%s\n' "$line" | registry_home_for_line)
+        projects=$(printf '%s\n' "$line" | registry_projects_for_line)
+        [ -n "$id" ] && [ -n "$home" ] || continue
+        printf '%s\t%s\t%s\n' "$id" "$home" "$projects"
+        ;;
+    esac
+  done < "$REG"
 }
 
 join_projects() {
@@ -1200,6 +1223,10 @@ case "${1:-}" in
   validate)
     [ $# -eq 1 ] || { usage; exit 1; }
     validate_registry
+    ;;
+  routes)
+    [ $# -eq 1 ] || { usage; exit 1; }
+    print_routes
     ;;
   -h|--help|'')
     usage
