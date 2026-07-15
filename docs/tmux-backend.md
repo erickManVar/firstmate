@@ -99,9 +99,24 @@ Verified the same session: a persisting parent process running a child command (
 
 The classifier (`fm_backend_tmux_agent_alive`) maps the observed name to `alive`, `dead`, or `unknown`:
 
-- `alive` - the name contains `claude`, `codex`, `opencode`, or `grok`. All four were confirmed to run as their own literal process name (`ps -ef`, 2026-07-07): `claude` and `codex` and `opencode` are each a native compiled binary (`file` reports Mach-O), so their `comm` is their own binary name with no interpreter wrapper to hide behind.
+- `alive` - the name contains `claude`, `codex`, `opencode`, or `grok`; OR it is a bare dotted-numeric version token (see below). All four harnesses were confirmed to run as their own literal process name (`ps -ef`, 2026-07-07): `claude` and `codex` and `opencode` are each a native compiled binary (`file` reports Mach-O), so their `comm` is their own binary name with no interpreter wrapper to hide behind.
 - `dead` - the name is a bare shell (`zsh`, `bash`, `sh`, `dash`, `ash`, `ksh`, `mksh`, `tcsh`, `csh`, `fish`).
 - `unknown` - anything else, including an unreadable pane.
+
+### Version-named foreground process (observed live 2026-07-14)
+
+A newer Claude build renames its own foreground process to its version string, so its pane reports the version, not `claude`.
+Reproduced live during Base Commerce secondmate acceptance, 2026-07-14, on the tmux backend with a real, visibly-idle-but-alive Claude TUI:
+
+```sh
+$ tmux display-message -p -t firstmate:fm-base-commerce-sm '#{pane_current_command}'
+2.1.208
+```
+
+The original name-only classifier mapped `2.1.208` to `unknown`, so a second `bin/secondmate` invocation refused to attach ("agent liveness is unproven ... refusing to launch a possible duplicate") even though the coordinator was plainly alive.
+`fm_backend_tmux_is_version_command` closes this: a bare token of only digits and dots, with at least one dot and a leading digit (`2.1.208`, not `python3.11` and not `node`), is classified `alive`.
+This is safe under the probe's correctness bar - a false `alive` never respawns anything, only a false `dead` does - so treating a bare version token as a live harness cannot spin up a duplicate, while it does let a version-renamed Claude (or any harness that does the same) be reused instead of blocked.
+Codex still reports its own `codex` binary name and is matched by the name rule unchanged; the version rule is an additive fallback that only fires when the name rule and the shell rule both miss.
 
 ### Known gap: `pi` cannot be confidently classified
 

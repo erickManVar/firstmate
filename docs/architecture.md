@@ -119,18 +119,20 @@ That keeps spawn launch compatible across claude, codex, grok, pi, and opencode 
 
 ## Optional secondmates
 
-`data/secondmates.md` records persistent domain supervisors with natural-language scopes, project clone lists, and home paths.
-`fm-home-seed.sh` provisions the isolated home, clones the listed PR-based projects into it, initializes newly cloned `no-mistakes` projects, copies the charter to `data/charter.md`, and `fm-spawn.sh --secondmate` launches it through the same session-provider and status-file path as any direct report.
+`data/secondmates.md` records persistent domain supervisors with natural-language scopes, project access lists, and home paths.
+`fm-home-seed.sh` provisions the isolated home, gives it legacy local clones or inherited access to explicitly registered container repos, copies the charter to `data/charter.md`, and `fm-spawn.sh --secondmate` launches it through the same session-provider and status-file path as any direct report.
 For a domain whose subject is the firstmate repo itself, a deliberate `--no-projects` seed creates a project-less home whose crews take pooled worktrees of that repo instead of separate clones.
 The signal cannot be mixed with project names or omitted accidentally, and a populated home cannot be converted in place; the full seed contract is in [configuration.md](configuration.md#secondmate-routes-datasecondmatesmd).
 On the herdr backend, a secondmate launch lands in that secondmate home's labeled workspace, and crewmates spawned from that home land in the same workspace.
 When seeded with `-`, the home is a durable treehouse lease under the secondmate id, so it survives with no live process and is not recycled by later `treehouse get` or pruning.
 Retirement or seed rollback returns the leased home; normal restart/recovery keeps it leased.
 If returning the lease fails during teardown, firstmate leaves the route and home intact instead of hiding a still-held lease.
-Seeding is transactional: if validation, cloning, initialization, or registry update fails, generated briefs, new homes, new project clones, and registry edits are rolled back.
+Seeding is transactional: if validation, cloning, initialization, inheritance, or registry update fails, generated briefs, new homes, owned project clones, config, and registry edits are rolled back.
+An external shared checkout is validated but never enters rollback ownership.
 `local-only` projects stay with the main first mate because they merge into the main local checkout instead of a remote-backed PR path.
 The same project may appear in multiple secondmate homes when their scopes differ, such as issue triage versus feature development.
 Secondmates are idle by default: after startup recovery reconciles only work already in their own home, an empty queue waits silently for routed tasks, and they never self-initiate surveys or audits.
+The primary can inspect all project-bearing coordinators with `bin/fm-secondmate-fleet.sh status` or apply the same fail-closed attach-or-recover decision to each through `bin/fm-secondmate-fleet.sh ensure`; the project-level daily workflow is documented in [project-secondmate.md](project-secondmate.md).
 When called with `FM_HOME=<this-firstmate-home>` or when `FM_HOME` is already set to the active firstmate home, metadata-routed `fm-send.sh` requests to a live `kind=secondmate` are prefixed with the from-firstmate marker from `bin/fm-marker-lib.sh`, so the secondmate returns terse answers through status lines and detailed answers through docs plus status pointers instead of replying only in its own chat.
 Explicit backend-target sends and direct human typing stay unmarked, so captain intervention in a secondmate pane remains conversational.
 After seeding a secondmate, `fm-backlog-handoff.sh` validates the fleet-specific handoff, then atomically delegates already-judged in-scope queued item moves to `tasks-axi mv` so the domain queue starts in the right place.
@@ -154,6 +156,8 @@ The `data/secondmates.md` line schema and the secondmate environment variables a
 ## Project modes are explicit
 
 `data/projects.md` records each project's delivery mode and optional `+yolo` autonomy flag.
+With `config/projects-root`, the same line explicitly lists one or more sibling repo names inside a same-named non-git project container; without it, the legacy single repo remains `$FM_HOME/projects/<name>`.
+Container and repo resolution is registry-only, while Orca's `workspaces` directory and colocated `.secondmate` homes are reserved operational paths rather than discoverable repos.
 `no-mistakes` projects run the full validation pipeline, `direct-PR` projects open PRs without that pipeline, and `local-only` projects stay local until firstmate performs an approved fast-forward merge.
 Review diffs go through `bin/fm-review-diff.sh`, which refreshes the authoritative base and, when task meta records `pr=`, compares against the reachable recorded `pr_head=` or a freshly fetched `refs/pull/<n>/head` before falling back to the local branch with a warning.
 For target project repos shipped through their own no-mistakes pipeline, commits under `.no-mistakes/evidence/` are the pipeline's PR-viewable validation evidence and are expected to stay in the crew branch until the evidence-hosting design changes.
@@ -208,7 +212,8 @@ Generalizable firstmate knowledge goes to shared tracked docs through the normal
 
 ## Local clones stay fresh
 
-The locked session-start bootstrap step, PR-based teardown, and merged-PR wake handling refresh remote-backed project clones when the clone is safe to move.
+The locked session-start bootstrap step, PR-based teardown, and merged-PR wake handling refresh registry-listed remote-backed projects when the checkout is safe to move.
+Shared catalog mutation belongs to the primary firstmate; secondmate homes delegate sync while continuing to spawn isolated worktrees from the same canonical path.
 Wake-time refreshes can target a single clone by project name, so the primary home also catches up when a secondmate reports a merge from its own home.
 Clean default-branch clones fast-forward to `origin/<default>`, and a clean detached HEAD that holds no unique commits is re-attached to the default branch before the same fast-forward path runs.
 Dirty clones, non-default branches, detached HEADs with unique commits, diverged defaults, and default branches checked out in another worktree are reported as `STUCK:` with their behind count and left untouched.

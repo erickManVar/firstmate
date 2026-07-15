@@ -24,7 +24,7 @@ Keep the always-inline routing rules in `AGENTS.md` authoritative: route by natu
 ```
 
 The `scope:` field is used during intake.
-The `projects:` field is a non-exclusive clone list, not ownership.
+The `projects:` field is a non-exclusive project access list, not ownership.
 
 ## Charter and seed
 
@@ -59,11 +59,23 @@ The slot stays reserved across restarts until the lease is released.
 Release happens only on explicit retirement or seed rollback, never on routine restart or recovery.
 
 `bin/fm-home-seed.sh` copies the charter into the secondmate home as `data/charter.md`.
-It also writes the required `.fm-secondmate-home` identity marker, which is gitignored and must remain in place for home validation.
+It also writes the required `.fm-secondmate-home` identity marker and `config/home-role` containing exactly `secondmate`, both gitignored and required for home validation and shared-sync isolation.
 `bin/fm-spawn.sh --secondmate` launches it through the secondmate harness path, resolving `config/secondmate-harness` -> `config/crew-harness` -> the primary's own harness unless an explicit per-spawn harness override is passed.
 
+Project access has two backward-compatible seed modes, selected by `bin/fm-projects-lib.sh`.
+Without `config/projects-root`, the legacy mode clones each listed project into the secondmate home's internal `projects/` directory and initializes only newly cloned `no-mistakes` repositories.
+With `config/projects-root`, shared mode inherits that absolute project-container base into the home and copies the selected registry lines.
+Each selected project line explicitly names one or more sibling repos in its same-named non-git container, and seed validates every listed repo and origin while requiring every repo in a `no-mistakes` project to be initialized already.
+The exact registry and reserved-path contract is owned by `docs/configuration.md` ("Project containers").
+An explicit seed home may be the container's real `.secondmate/` sibling directory; `ensure_home` clones the firstmate checkout there and normal home validation keeps it isolated from every canonical repo.
+Shared mode keeps the internal `projects/` directory real and empty, never replaces it with a symlink, and never clones, initializes, fleet-syncs, deletes, or records rollback ownership over any registered repo.
+The primary firstmate home must deliberately set `config/home-role` to exactly `primary` before shared mode is enabled; it owns safe fleet-sync mutation of shared container repos.
+A `secondmate` role may resolve those repos and spawn isolated task worktrees but delegates canonical sync to the primary.
+`FM_PROJECTS_OVERRIDE` remains the highest-precedence one-shot project-base input, but shared seeding requires the durable `config/projects-root` file because environment overrides are cleared on secondmate launch.
+
 `config/secondmate-harness` may also pin a concrete model and effort for the secondmate agent, in the SAME file rather than a new one: the format is a single whitespace-separated line `<harness> [<model>] [<effort>]`, with only the first non-empty, non-comment line parsed.
-A bare `<harness>` (today's format, e.g. `claude`) behaves exactly as before - harness only, no model/effort flag - so this is fully backward-compatible.
+A bare `<harness>` still resolves harness-only tokens (`fm-harness.sh secondmate-model`/`secondmate-effort` stay empty), but at spawn time a templated claude secondmate with neither a model nor an effort from any source launches on the recommended coordinator posture, Fable 5 medium, applied as a pair; pinning either axis disables that default, and every other harness (an explicit codex coordinator included) launches with no injected model or effort exactly as before.
+`docs/configuration.md` "Coordinator posture" owns that default.
 `bin/fm-harness.sh secondmate-model` and `bin/fm-harness.sh secondmate-effort` print the optional 2nd/3rd tokens (empty when absent, or when the file is absent/`default`/harness-only); they read only `config/secondmate-harness`, never `config/crew-harness`, which stays a bare adapter name.
 For a `--secondmate` spawn, `bin/fm-spawn.sh` populates `MODEL`/`EFFORT` from those tokens only when the harness itself came from the secondmate config path for that spawn.
 An explicit per-spawn `--harness` flag, positional harness arg, or raw launch command starts clean on model and effort too, unless the caller also passes explicit `--model` or `--effort`.
@@ -75,24 +87,28 @@ This section is the single owner of the secondmate sync and inheritable-config p
 Before launch, `fm-spawn.sh --secondmate` locally fast-forwards the home to the primary firstmate checkout's current default-branch commit when it is safe; dirty, diverged, or in-flight homes launch unchanged with a warning.
 The locked session-start bootstrap sweep runs the same guarded fast-forward for every live secondmate home, discovered from `state/<id>.meta` records with `kind=secondmate` (`data/secondmates.md` only backfills `home=` for older records).
 That no-fetch path is a purely local fast-forward of tracked files, never an origin fetch, and it never touches the gitignored operational dirs, so a secondmate's backlog, projects, and in-flight work are never disturbed; a linked worktree advances immediately, while a standalone clone that lacks the target receives firstmate updates through `/updatefirstmate`'s origin refresh.
-The same launch and the same locked bootstrap sweep also propagate the primary's declared inheritable local config, currently `config/crew-dispatch.json`, `config/crew-harness`, and `config/backlog-backend`, into the secondmate home's `config/`.
+The same launch and the same locked bootstrap sweep also propagate the primary's declared inheritable local config, currently `config/crew-dispatch.json`, `config/crew-harness`, `config/backlog-backend`, and the project-container base in `config/projects-root`, into the secondmate home's `config/`.
 Because `config/` is gitignored, that propagation is a separate, primary-authoritative copy independent of the tracked-files fast-forward: it re-converges every live home whether or not its tracked files advanced, and it touches only the declared items.
 Inheritance copies the literal `config/crew-harness` file, so a secondmate's own crewmates use the primary's crewmate harness only when it names a concrete adapter such as `codex`; an unset or `default` value has nothing concrete to inherit, and the secondmate's own crewmates fall back to the secondmate's own or detected harness instead.
 `config/secondmate-harness` is not inherited because it is only the primary's knob for launching secondmate agents.
 No reread nudge is needed at spawn or respawn because the agent reads `AGENTS.md` fresh on launch; only the bootstrap sweep's `NUDGE_SECONDMATES:` case (a RUNNING home whose instruction surface advanced) needs one.
 For already-live secondmates, use `bin/fm-config-push.sh` to push a mid-session inherited-config change without running the tracked-file fast-forward or nudging the agents.
 It uses the same live-home discovery and propagation helper as bootstrap and reports each item as `pushed`, `unchanged`, `skipped`, or `error`.
+A contract or policy change - the delivery posture and coordinator posture included - never mutates a running secondmate mid-conversation: convergence is shared code landing on the primary default branch, inheritable config propagating through the sweep or `bin/fm-config-push.sh`, and the next restart or respawn reading the new `AGENTS.md` contract from disk while the home keeps its own `data/`, backlog, and history.
+Existing charters on disk are not rewritten for such a change; a restarted coordinator picks the new intake contract up from `AGENTS.md`, and only newly scaffolded charters carry the updated charter wording directly.
 `bin/fm-home-seed.sh` refuses to copy a missing or placeholder charter.
 
 Direct seed without a preexisting brief requires `FM_SECONDMATE_CHARTER`.
 Run `bin/fm-home-seed.sh validate` when checking registry integrity; it refuses duplicate ids, duplicate homes, and nested or overlapping homes.
 
 Seeding is transactional.
-If validation, cloning, no-mistakes initialization, or registry update fails, generated briefs, new homes, new project clones, and registry edits are rolled back.
+If validation, cloning, no-mistakes initialization, inheritance, or registry update fails, generated briefs, new homes, owned project clones, inherited config, and registry edits are rolled back.
+An external registered container repo is never a rollback target.
 
-Secondmate project lists may include `no-mistakes` and `direct-PR` projects only.
+Secondmate project access lists may include `no-mistakes` and `direct-PR` projects only.
 `local-only` projects stay with the main firstmate.
-For `no-mistakes` projects, seeding initializes only projects newly cloned into a secondmate home and refuses to mutate a preexisting clone that is not already initialized.
+For legacy `no-mistakes` projects, seeding initializes only projects newly cloned into a secondmate home and refuses to mutate a preexisting clone that is not already initialized.
+For shared `no-mistakes` projects, every explicitly registered repo must already be initialized and seed never initializes one.
 
 ## Backlog handoff
 
@@ -126,7 +142,7 @@ bin/fm-spawn.sh <id> --secondmate
 
 Use the recorded `home=` in meta.
 If meta is missing but `data/secondmates.md` still registers the secondmate, respawn from the registry entry and its persistent on-disk home.
-Respawn re-resolves the secondmate harness from current config, uses the same guarded pre-launch sync, and re-propagates inheritable config, so recovered secondmates converge to the primary firstmate version and local dispatch, crew-harness, and backlog-backend settings whenever their home can be cleanly fast-forwarded.
+Respawn re-resolves the secondmate harness from current config, uses the same guarded pre-launch sync, and re-propagates inheritable config, so recovered secondmates converge to the primary firstmate version, local dispatch, crew-harness, backlog-backend, and project-catalog settings whenever their home can be cleanly fast-forwarded.
 If the secondmate is already running and only inherited config changed, prefer `bin/fm-config-push.sh` over respawning.
 
 Do not reconstruct a secondmate's whole tree from the main home.

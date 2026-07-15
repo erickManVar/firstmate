@@ -7,6 +7,8 @@
 #   - <name> - <desc> (added <date>)                  -> no-mistakes off  (legacy default)
 #   - <name> [<mode>] - <desc> (added <date>)          -> <mode> off
 #   - <name> [<mode> +yolo] - <desc> (added <date>)    -> <mode> on
+# Shared project-container entries append explicit repo metadata before added:
+#   - <name> [<mode>] - <desc> (repos: <repo>[, <repo>...]; added <date>)
 #
 # mode = how a finished change reaches main:
 #   no-mistakes  full pipeline -> PR -> captain merge (default)
@@ -18,7 +20,7 @@
 #
 # An unknown/missing project or unknown mode falls back to "no-mistakes off" and warns
 # to stderr, so a typo never silently drops the gate.
-# Usage: fm-project-mode.sh <project-name>
+# Usage: fm-project-mode.sh <project-name-or-selector>
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,7 +28,17 @@ FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 REG="$DATA/projects.md"
-NAME=${1:?usage: fm-project-mode.sh <project-name>}
+INPUT=${1:?usage: fm-project-mode.sh <project-name-or-selector>}
+# shellcheck source=bin/fm-projects-lib.sh
+. "$SCRIPT_DIR/fm-projects-lib.sh"
+if NAME=$(fm_project_name_from_arg "$INPUT" 2>/dev/null); then
+  :
+elif [ "$(fm_projects_mode)" = shared-external ]; then
+  echo "error: project selector is not registered in shared mode: $INPUT" >&2
+  exit 1
+else
+  NAME=$(basename "$INPUT")
+fi
 
 if [ ! -f "$REG" ]; then
   echo "warn: no registry at $REG; defaulting $NAME to no-mistakes off" >&2

@@ -43,27 +43,97 @@ EOF
 }
 
 # fm-brief.sh must exit 0 and produce a brief with no unreplaced shell
-# metacharacter corruption for every ship delivery mode. This also guards
+# metacharacter corruption for every posture/mode combination. This also guards
 # against any *new* unescaped apostrophe or unbalanced quote later added to
 # one of these DOD blocks, since a broken heredoc corrupts or empties the
 # generated brief content, not just the script's own syntax.
 test_ship_modes_generate_clean_briefs() {
-  local home id brief status
+  local home id proj delivery brief status
   home="$TMP_ROOT/ship-home"
   write_registry "$home"
 
-  for id_proj in "brief-nomistakes-a1:no-registry-proj" "brief-directpr-a2:direct-proj" "brief-localonly-a3:local-proj"; do
-    id=${id_proj%%:*}
-    proj=${id_proj##*:}
-    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" "$proj" >/dev/null 2>&1; status=$?
-    expect_code 0 "$status" "fm-brief.sh $id $proj should exit 0"
+  for id_proj in \
+    "brief-nomistakes-a1:no-registry-proj:peer-ship" \
+    "brief-directpr-a2:direct-proj:peer-ship" \
+    "brief-localonly-a3:local-proj:rapid-local" \
+    "brief-rapid-a4:no-registry-proj:rapid-local"; do
+    id=$(printf '%s' "$id_proj" | cut -d: -f1)
+    proj=$(printf '%s' "$id_proj" | cut -d: -f2)
+    delivery=$(printf '%s' "$id_proj" | cut -d: -f3)
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" "$proj" --delivery "$delivery" >/dev/null 2>&1; status=$?
+    expect_code 0 "$status" "fm-brief.sh $id $proj --delivery $delivery should exit 0"
     brief="$home/data/$id/brief.md"
     assert_present "$brief" "$id: brief was not scaffolded"
     assert_grep "# Definition of done" "$brief" "$id: brief missing Definition of done section"
     assert_grep "{TASK}" "$brief" "$id: brief missing the {TASK} placeholder"
     assert_no_grep "EOF" "$brief" "$id: brief leaked a heredoc EOF marker (unterminated heredoc)"
+    assert_present "$home/data/$id/delivery" "$id: delivery posture record was not written"
+    [ "$(cat "$home/data/$id/delivery")" = "$delivery" ] || fail "$id: delivery record does not hold $delivery"
   done
-  pass "fm-brief.sh: no-mistakes/direct-PR/local-only briefs generate cleanly"
+  pass "fm-brief.sh: every posture/mode brief generates cleanly with a durable delivery record"
+}
+
+# The delivery posture gate is fail-closed and scoped to ship briefs only.
+test_delivery_posture_gate() {
+  local home status
+  home="$TMP_ROOT/delivery-gate-home"
+  write_registry "$home"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" gate-missing someproj >/dev/null 2>&1; status=$?
+  expect_code 1 "$status" "a ship brief without --delivery must fail"
+  assert_absent "$home/data/gate-missing/brief.md" "refused ship brief still wrote a file"
+  assert_absent "$home/data/gate-missing/delivery" "refused ship brief still wrote a delivery record"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" gate-bogus someproj --delivery bogus >/dev/null 2>&1; status=$?
+  expect_code 1 "$status" "an unknown --delivery value must fail"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" gate-scout someproj --scout --delivery rapid-local >/dev/null 2>&1; status=$?
+  expect_code 1 "$status" "--delivery on a scout brief must fail"
+
+  FM_HOME="$home" FM_SECONDMATE_CHARTER=x "$ROOT/bin/fm-brief.sh" gate-sm --secondmate --no-projects --delivery peer-ship >/dev/null 2>&1; status=$?
+  expect_code 1 "$status" "--delivery on a secondmate charter must fail"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" gate-local local-proj --delivery peer-ship >/dev/null 2>&1; status=$?
+  expect_code 1 "$status" "peer-ship on a local-only project must fail"
+  assert_absent "$home/data/gate-local/brief.md" "refused peer-ship brief still wrote a file"
+
+  # A scout scaffold stays posture-free and keeps working with no flag.
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" gate-scout-ok someproj --scout >/dev/null 2>&1; status=$?
+  expect_code 0 "$status" "a scout brief without --delivery must keep working"
+  assert_absent "$home/data/gate-scout-ok/delivery" "a scout scaffold must not write a delivery record"
+
+  pass "fm-brief.sh: the delivery gate fails closed for ship briefs and rejects misuse"
+}
+
+# rapid-local reshapes the DOD onto the guarded local path with focused
+# validation, whatever the registered mode says; peer-ship names itself and
+# rides the registered mode.
+test_delivery_posture_shapes_dod() {
+  local home brief
+  home="$TMP_ROOT/delivery-dod-home"
+  write_registry "$home"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" dod-rapid direct-proj --delivery rapid-local >/dev/null 2>&1
+  brief="$home/data/dod-rapid/brief.md"
+  assert_grep "This task ships **rapid-local**" "$brief" "rapid-local brief does not name its posture"
+  assert_grep "Run the focused validation that actually exercises your change" "$brief" \
+    "rapid-local brief lost the focused-validation requirement"
+  assert_grep "done: ready in branch fm/dod-rapid" "$brief" "rapid-local brief lost the local done contract"
+  assert_no_grep "gh-axi\`, then append \`done: PR" "$brief" \
+    "rapid-local brief on a direct-PR project must not instruct a PR"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" dod-peer some-proj --delivery peer-ship >/dev/null 2>&1
+  brief="$home/data/dod-peer/brief.md"
+  assert_grep "This task ships **peer-ship** through the registered **no-mistakes** pipeline" "$brief" \
+    "peer-ship no-mistakes brief does not name its posture"
+  assert_grep "no-mistakes doctor" "$brief" "peer-ship no-mistakes brief lost the pipeline setup step"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" dod-peer-pr direct-proj --delivery peer-ship >/dev/null 2>&1
+  brief="$home/data/dod-peer-pr/brief.md"
+  assert_grep "This task ships **peer-ship** through the registered **direct-PR** mode" "$brief" \
+    "peer-ship direct-PR brief does not name its posture"
+
+  pass "fm-brief.sh: the delivery posture shapes the definition of done and stays visible to the crewmate"
 }
 
 # Pin the specific line the bug lived on: the no-mistakes DOD's no-mistakes
@@ -73,7 +143,7 @@ test_no_mistakes_dod_wording() {
   home="$TMP_ROOT/wording-home"
   mkdir -p "$home/data"
   id="brief-wording-b1"
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj >/dev/null 2>&1
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --delivery peer-ship >/dev/null 2>&1
   brief="$home/data/$id/brief.md"
   assert_present "$brief" "brief was not scaffolded"
   assert_grep "no-mistakes itself provides for the mechanics" "$brief" \
@@ -88,7 +158,7 @@ test_ship_project_memory_wording() {
   home="$TMP_ROOT/project-memory-home"
   mkdir -p "$home/data"
   id="brief-memory-c1"
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj >/dev/null 2>&1
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --delivery peer-ship >/dev/null 2>&1
   brief="$home/data/$id/brief.md"
   assert_present "$brief" "brief was not scaffolded"
   assert_grep "Record only project knowledge useful to almost every future session." "$brief" \
@@ -105,7 +175,7 @@ test_herdr_lab_contract_is_explicit_and_complete() {
   home="$TMP_ROOT/herdr-lab-home"
   mkdir -p "$home/data"
   id="brief-herdr-lab-d1"
-  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" firstmate --herdr-lab >/dev/null 2>&1
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" firstmate --delivery peer-ship --herdr-lab >/dev/null 2>&1
   brief="$home/data/$id/brief.md"
   assert_present "$brief" "Herdr lab brief was not scaffolded"
   assert_grep "# Herdr isolation - HARD SAFETY CONTRACT" "$brief" \
@@ -157,7 +227,7 @@ test_herdr_lab_omission_is_loud_for_ship_and_scout() {
     if [ "$kind" = scout ]; then
       FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" firstmate --scout >/dev/null 2>&1
     else
-      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" firstmate >/dev/null 2>&1
+      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" firstmate --delivery peer-ship >/dev/null 2>&1
     fi
     brief="$home/data/$id/brief.md"
     assert_grep "# Herdr lifecycle declaration - NOT ENABLED" "$brief" \
@@ -181,7 +251,7 @@ test_secondmate_no_projects_charter() {
   expect_code 0 "$status" "--no-projects secondmate brief should exit 0"
   brief="$home/data/fdev/brief.md"
   assert_present "$brief" "project-less charter was not scaffolded"
-  assert_grep "# Project clones" "$brief" "project-less charter dropped the Project clones heading"
+  assert_grep "# Project access" "$brief" "project-less charter dropped the Project access heading"
   assert_grep "None. This is a project-less domain" "$brief" \
     "project-less charter did not render a sensible no-clones note"
   assert_grep "its crews take pooled worktrees of that repo" "$brief" \
@@ -234,7 +304,7 @@ test_pause_verb_override_renders_all_brief_scaffolds() {
     case "$kind" in
       ship)
         FM_HOME="$home" FM_CLASSIFY_PAUSED_VERB=awaiting \
-          "$ROOT/bin/fm-brief.sh" "$id" firstmate >/dev/null 2>&1
+          "$ROOT/bin/fm-brief.sh" "$id" firstmate --delivery peer-ship >/dev/null 2>&1
         ;;
       scout)
         FM_HOME="$home" FM_CLASSIFY_PAUSED_VERB=awaiting \
@@ -263,6 +333,8 @@ test_pause_verb_override_renders_all_brief_scaffolds() {
 test_script_parses
 test_help_includes_entire_header
 test_ship_modes_generate_clean_briefs
+test_delivery_posture_gate
+test_delivery_posture_shapes_dod
 test_no_mistakes_dod_wording
 test_ship_project_memory_wording
 test_herdr_lab_contract_is_explicit_and_complete

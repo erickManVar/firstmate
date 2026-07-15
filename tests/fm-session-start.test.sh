@@ -311,8 +311,12 @@ EOF
   assert_contains "$out" "another live firstmate session holds the lock" "read-only banner did not surface fm-lock.sh's own error text"
   assert_contains "$out" "Skipping every mutating step" "read-only banner did not explain what was skipped"
   assert_contains "$out" "skipped (read-only session)" "wake-queue section did not report itself skipped"
-  assert_contains "$out" "WATCHER DOWN - SUPERVISION IS OFF" "read-only guard did not surface watcher-liveness alarm"
-  assert_contains "$out" "queued wakes pending - left untouched for the session holding the fleet lock" "read-only guard did not leave queued wakes to the lock holder"
+  # A persistent secondmate coordinator belongs to its own FM_HOME, so it must
+  # not make the primary watcher health guard fire or recreate the Stop-hook
+  # loop this lifecycle split removed. The read-only queue summary above still
+  # confirms the queued wake remains for the lock holder.
+  assert_not_contains "$out" "WATCHER DOWN - SUPERVISION IS OFF" "persistent secondmate metadata triggered the primary watcher guard"
+  assert_not_contains "$out" "queued wakes pending - left untouched for the session holding the fleet lock" "persistent secondmate metadata triggered the primary queue warning"
   assert_contains "$out" "TANGLE: primary checkout on feature branch 'fm/read-only-tangle'" "read-only bootstrap did not surface the tangle diagnostic"
   assert_contains "$out" "read-only session must leave restore work" "read-only tangle diagnostic did not explain restore ownership"
   assert_contains "$out" "Stay read-only: do not arm" "read-only next step did not block direct watcher repair"

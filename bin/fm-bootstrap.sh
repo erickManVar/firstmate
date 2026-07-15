@@ -10,6 +10,7 @@
 #                 "CREW_DISPATCH: invalid config/crew-dispatch.json - <reason>",
 #                 "CREW_DISPATCH: active config/crew-dispatch.json" plus indented rules,
 #                 "FLEET_SYNC: <repo>: skipped|recovered|STUCK: <detail>",
+#                 "FLEET_SYNC: <fleet-sync failure detail>",
 #                 "TASKS_AXI: available", "TANGLE: <remediation>",
 #                 "SECONDMATE_SYNC: secondmate <id>: skipped: <reason>",
 #                 "NUDGE_SECONDMATES: fm-<id>...",
@@ -82,9 +83,11 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
-PROJECTS="${FM_PROJECTS_OVERRIDE:-$FM_HOME/projects}"
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
+# shellcheck source=bin/fm-projects-lib.sh disable=SC1091
+. "$SCRIPT_DIR/fm-projects-lib.sh"
+PROJECTS=$(fm_projects_root) || exit 1
 # shellcheck source=bin/fm-tasks-axi-lib.sh disable=SC1091
 . "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
 # shellcheck source=bin/fm-tangle-lib.sh disable=SC1091
@@ -99,15 +102,25 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-backend.sh"
 
 fleet_sync_origin_backed_project_count() {
-  local count proj
+  local count proj name names repos
   count=0
   [ -d "$PROJECTS" ] || { echo 0; return 0; }
-  for proj in "$PROJECTS"/*; do
-    [ -d "$proj" ] || continue
-    git -C "$proj" rev-parse --git-dir >/dev/null 2>&1 || continue
-    git -C "$proj" remote get-url origin >/dev/null 2>&1 || continue
-    count=$((count + 1))
-  done
+  names=$(fm_project_registry_names) || return 1
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    repos=$(fm_project_repo_paths "$name") || return 1
+    while IFS= read -r proj; do
+      [ -n "$proj" ] || continue
+      [ -d "$proj" ] || continue
+      git -C "$proj" rev-parse --git-dir >/dev/null 2>&1 || continue
+      git -C "$proj" remote get-url origin >/dev/null 2>&1 || continue
+      count=$((count + 1))
+    done <<EOF
+$repos
+EOF
+  done <<EOF
+$names
+EOF
   echo "$count"
 }
 
@@ -131,8 +144,6 @@ fleet_sync_relay_filtered_output() {
   local tmp=$1 line
   while IFS= read -r line; do
     case "$line" in
-      *': skipped: local-only project') ;;
-      *': skipped: no origin remote') ;;
       *': skipped:'*) echo "FLEET_SYNC: $line" ;;
       *': STUCK:'*) echo "FLEET_SYNC: $line" ;;
       *': recovered:'*) echo "FLEET_SYNC: $line" ;;
@@ -148,16 +159,29 @@ fleet_sync_relay_all_output() {
   done < "$tmp"
 }
 
+fleet_sync_relay_error_output() {
+  local tmp=$1 line
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    echo "FLEET_SYNC: $line"
+  done < "$tmp"
+}
+
 fleet_sync() {
+  local err pid start elapsed sync_status timeout tmp
   [ -x "$FM_ROOT/bin/fm-fleet-sync.sh" ] || return 0
   [ -d "$PROJECTS" ] || return 0
 
   tmp=$(mktemp "${TMPDIR:-/tmp}/fm-fleet-sync.XXXXXX" 2>/dev/null) || return 0
+  err=$(mktemp "${TMPDIR:-/tmp}/fm-fleet-sync-stderr.XXXXXX" 2>/dev/null) || {
+    rm -f "$tmp"
+    return 0
+  }
   timeout=$(fleet_sync_bootstrap_timeout)
   monitor_was_on=0
   case $- in *m*) monitor_was_on=1 ;; esac
   set -m 2>/dev/null || true
-  "$FM_ROOT/bin/fm-fleet-sync.sh" >"$tmp" 2>/dev/null &
+  "$FM_ROOT/bin/fm-fleet-sync.sh" >"$tmp" 2>"$err" &
   pid=$!
 
   start=$SECONDS
@@ -169,24 +193,29 @@ fleet_sync() {
       [ "$monitor_was_on" -eq 1 ] || set +m 2>/dev/null || true
       fleet_sync_relay_all_output "$tmp"
       echo "FLEET_SYNC: fleet: skipped: bootstrap refresh timed out (timeout=${timeout}s elapsed=${elapsed}s)"
-      rm -f "$tmp"
+      rm -f "$tmp" "$err"
       return 0
     fi
     sleep 1
   done
-  wait "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null
+  sync_status=$?
   [ "$monitor_was_on" -eq 1 ] || set +m 2>/dev/null || true
 
   fleet_sync_relay_filtered_output "$tmp"
-  rm -f "$tmp"
+  if [ "$sync_status" -ne 0 ]; then
+    fleet_sync_relay_error_output "$err"
+  fi
+  rm -f "$tmp" "$err"
 }
 
 secondmate_sync() {
   # Local-HEAD secondmate sync: fast-forward every LIVE secondmate home
-  # to the primary checkout's current default-branch commit. Purely LOCAL - no
-  # fetch, no origin dependency: a linked-worktree home already holds the primary's
-  # commit (fm-ff-lib.sh), while a standalone clone without it is skipped until
-  # /updatefirstmate refreshes it from origin. Emits NUDGE_SECONDMATES:
+  # to the primary checkout's current default-branch commit. No network/origin
+  # dependency: a linked-worktree home already holds the primary's commit, while a
+  # standalone clone missing it has the commit acquired from the trusted local
+  # primary repository over the filesystem (fm-ff-lib.sh), then the same ff-only
+  # guards apply. Emits NUDGE_SECONDMATES:
   # only for RUNNING secondmates whose instruction surface (AGENTS.md, bin/, or
   # .agents/skills/) actually changed, so a secondmate already on the primary's
   # version is never disturbed (AGENTS.md bootstrap + supervision). Mirrors
@@ -297,7 +326,10 @@ secondmate_liveness_sweep() {
         ;;
       dead)
         fm_backend_kill "$backend" "$target" 2>/dev/null || true
-        if out=$(FM_SPAWN_NO_GUARD=1 "$FM_ROOT/bin/fm-spawn.sh" "$id" --secondmate 2>&1); then
+        # Respawn on the RECORDED backend (absent backend= means tmux), never
+        # the ambient resolution: a dead Orca-hosted coordinator must come
+        # back on Orca even if this session would resolve a different backend.
+        if out=$(FM_SPAWN_NO_GUARD=1 "$FM_ROOT/bin/fm-spawn.sh" "$id" --secondmate --backend "$backend" 2>&1); then
           echo "SECONDMATE_LIVENESS: secondmate $id: respawned"
         else
           echo "SECONDMATE_LIVENESS: secondmate $id: respawn failed: $(first_line "$out")"

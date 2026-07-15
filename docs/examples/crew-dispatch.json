@@ -11,14 +11,19 @@
       "why": "Use the cheapest fast profile when the task is narrow and low ambiguity."
     },
     {
-      "when": "The task is a big or ambiguous multi-file feature, a risky refactor, or work that requires holding many moving parts in mind.",
+      "when": "The implementation is genuinely complex or risky: a big or ambiguous multi-file feature, a risky refactor, or work with real blast radius that requires holding many moving parts in mind.",
+      "use": { "harness": "codex", "model": "gpt-5.6-sol", "effort": "high" },
+      "why": "Escalate implementation to the strongest coding profile when the change is complex or the cost of a mistake is real."
+    },
+    {
+      "when": "The task is an independent architecture or review pass on other work, where a materially warranted second opinion should not share the implementing profile.",
       "use": [
-        { "harness": "claude", "model": "claude-sonnet-5", "effort": "high" },
-        { "harness": "codex", "model": "gpt-5.5", "effort": "high" }
+        { "harness": "claude", "model": "claude-fable-5", "effort": "high" },
+        { "harness": "codex", "model": "gpt-5.6-sol", "effort": "high" }
       ],
       "select": "quota-balanced",
-      "why": "Use a strong coding profile for broad design and implementation work."
+      "why": "Either strong profile is acceptable for an independent review; balance on quota rather than always mirroring the implementer."
     }
   ],
-  "default": { "harness": "codex", "model": "gpt-5.5", "effort": "medium" }
+  "default": { "harness": "codex", "model": "gpt-5.6-terra", "effort": "medium" }
 }

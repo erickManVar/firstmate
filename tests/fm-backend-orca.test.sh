@@ -453,7 +453,7 @@ test_spawn_preserves_orca_metadata_when_pathless_worktree_cleanup_fails() {
   printf '{"ok":false,"error":{"code":"worktree_not_removed","message":"worktree not removed"}}\n' > "$RESP/5.out"
   out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
     FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
-    FM_PROJECTS_OVERRIDE="$TMP_ROOT/unused-projects" FM_SPAWN_NO_GUARD=1 \
+    FM_PROJECTS_OVERRIDE='' FM_SPAWN_NO_GUARD=1 \
     "$ROOT/bin/fm-spawn.sh" "$id" "$proj" claude --backend orca 2>&1 )
   status=$?
   [ "$status" -ne 0 ] || fail "Orca spawn should fail when path parsing and cleanup fail"
@@ -488,7 +488,7 @@ test_spawn_writes_orca_metadata_and_launches_harness() {
   printf '{"ok":true,"result":{"worktree":{"id":"wt-spawn","path":"%s"},"terminal":{"handle":"term-spawn"}}}\n' "$wt" > "$RESP/3.out"
   out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
     FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
-    FM_PROJECTS_OVERRIDE="$TMP_ROOT/unused-projects" FM_SPAWN_NO_GUARD=1 \
+    FM_PROJECTS_OVERRIDE='' FM_SPAWN_NO_GUARD=1 \
     "$ROOT/bin/fm-spawn.sh" "$id" "$proj" claude --backend orca 2>&1 )
   expect_code 0 $? "fm-spawn.sh --backend orca should succeed with fake Orca"$'\n'"$out"
   assert_contains "$out" "spawned $id harness=claude kind=ship mode=no-mistakes yolo=off window=fm-$id worktree=$wt" \
@@ -508,32 +508,8 @@ test_spawn_writes_orca_metadata_and_launches_harness() {
   pass "fm-spawn.sh --backend orca: reuses implicit terminal, records metadata, launches harness"
 }
 
-test_spawn_refuses_orca_secondmate_before_home_mutation() {
-  local home subhome data state config id out status
-  id="orcasmz1"
-  home="$TMP_ROOT/secondmate-refusal-home"
-  subhome="$TMP_ROOT/secondmate-refusal-subhome"
-  data="$home/data"
-  state="$home/state"
-  config="$home/config"
-  mkdir -p "$data" "$state" "$config" "$subhome/bin" "$subhome/data" "$subhome/state" "$subhome/projects"
-  printf '%s\n' "$id" > "$subhome/.fm-secondmate-home"
-  printf 'firstmate\n' > "$subhome/AGENTS.md"
-  printf 'claude\n' > "$config/crew-harness"
-  touch "$state/.last-watcher-beat"
-  set +e
-  out=$( FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$home" FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
-    FM_PROJECTS_OVERRIDE="$home/projects" FM_SPAWN_NO_GUARD=1 \
-    "$ROOT/bin/fm-spawn.sh" "$id" "$subhome" claude --backend orca --secondmate 2>&1 )
-  status=$?
-  set +e
-  [ "$status" -ne 0 ] || fail "backend=orca --secondmate should be refused"
-  assert_contains "$out" "backend=orca does not support --secondmate spawns yet" \
-    "orca secondmate refusal should happen at backend selection"
-  assert_absent "$subhome/config/crew-harness" \
-    "orca secondmate refusal should not propagate inheritable config into the secondmate home"
-  pass "fm-spawn.sh --backend orca --secondmate: refuses before secondmate-home mutation"
-}
+# Native Orca secondmate hosting (adoption, duplicate prevention, liveness,
+# retirement, sweep recovery) is covered by tests/fm-backend-orca-secondmate.test.sh.
 
 test_spawn_refuses_orca_when_runtime_not_ready() {
   local proj data state config id out status
@@ -550,7 +526,7 @@ test_spawn_refuses_orca_when_runtime_not_ready() {
   printf '{"ok":true,"result":{"runtime":{"reachable":false,"state":"starting"}}}\n' > "$RESP/1.out"
   out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" FM_ORCA_STATUS_RESPONSE=sequence \
     FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
-    FM_PROJECTS_OVERRIDE="$TMP_ROOT/unused-projects" FM_SPAWN_NO_GUARD=1 \
+    FM_PROJECTS_OVERRIDE='' FM_SPAWN_NO_GUARD=1 \
     "$ROOT/bin/fm-spawn.sh" "$id" "$proj" claude --backend orca 2>&1 )
   status=$?
   [ "$status" -ne 0 ] || fail "fm-spawn.sh --backend orca should refuse when Orca runtime is not ready"
@@ -581,7 +557,7 @@ test_spawn_refuses_orca_nonisolated_worktree() {
   printf '{"ok":true,"result":{"worktree":{"id":"wt-bad","path":"%s"},"terminal":{"handle":"term-bad"}}}\n' "$proj" > "$RESP/3.out"
   out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
     FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
-    FM_PROJECTS_OVERRIDE="$TMP_ROOT/unused-projects" FM_SPAWN_NO_GUARD=1 \
+    FM_PROJECTS_OVERRIDE='' FM_SPAWN_NO_GUARD=1 \
     "$ROOT/bin/fm-spawn.sh" "$id" "$proj" claude --backend orca 2>&1 )
   status=$?
   expect_code 1 "$status" "fm-spawn.sh --backend orca should refuse a primary checkout worktree"
@@ -616,7 +592,7 @@ test_spawn_removes_orca_worktree_when_terminal_create_fails() {
   printf '1\n' > "$RESP/4.exit"
   out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
     FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
-    FM_PROJECTS_OVERRIDE="$TMP_ROOT/unused-projects" FM_SPAWN_NO_GUARD=1 \
+    FM_PROJECTS_OVERRIDE='' FM_SPAWN_NO_GUARD=1 \
     "$ROOT/bin/fm-spawn.sh" "$id" "$proj" claude --backend orca 2>&1 )
   status=$?
   [ "$status" -ne 0 ] || fail "Orca spawn should fail when terminal creation fails"
@@ -650,7 +626,7 @@ test_spawn_preserves_orca_metadata_when_abort_cleanup_fails() {
   printf '1\n' > "$RESP/5.exit"
   out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
     FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
-    FM_PROJECTS_OVERRIDE="$TMP_ROOT/unused-projects" FM_SPAWN_NO_GUARD=1 \
+    FM_PROJECTS_OVERRIDE='' FM_SPAWN_NO_GUARD=1 \
     "$ROOT/bin/fm-spawn.sh" "$id" "$proj" claude --backend orca 2>&1 )
   status=$?
   [ "$status" -ne 0 ] || fail "Orca spawn should fail when terminal creation and abort cleanup fail"
@@ -683,7 +659,7 @@ test_spawn_releases_orca_resources_when_metadata_write_fails() {
   printf '{"ok":true,"result":{"terminal":{"handle":"term-meta-fail"}}}\n' > "$RESP/4.out"
   out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
     FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$state_file" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
-    FM_PROJECTS_OVERRIDE="$TMP_ROOT/unused-projects" FM_SPAWN_NO_GUARD=1 \
+    FM_PROJECTS_OVERRIDE='' FM_SPAWN_NO_GUARD=1 \
     "$ROOT/bin/fm-spawn.sh" "$id" "$proj" claude --backend orca 2>&1 )
   status=$?
   [ "$status" -ne 0 ] || fail "Orca spawn should fail when metadata cannot be written"
@@ -1299,7 +1275,6 @@ test_worktree_and_terminal_helpers_parse_json
 test_worktree_create_removes_worktree_when_path_missing
 test_spawn_preserves_orca_metadata_when_pathless_worktree_cleanup_fails
 test_spawn_writes_orca_metadata_and_launches_harness
-test_spawn_refuses_orca_secondmate_before_home_mutation
 test_spawn_refuses_orca_when_runtime_not_ready
 test_spawn_refuses_orca_nonisolated_worktree
 test_spawn_removes_orca_worktree_when_terminal_create_fails

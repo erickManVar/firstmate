@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Spawn a direct report: a crewmate in a treehouse or Orca worktree, or a
 # secondmate in its isolated firstmate home.
-# Usage: fm-spawn.sh <task-id> <project-dir> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--scout]
+# Usage: fm-spawn.sh <task-id> <project-or-project/repo> [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--scout]
 #        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --secondmate
 #   --harness <name> is the explicit per-spawn harness/profile adapter. The old
 #   positional harness arg still works for back-compat.
@@ -21,6 +21,10 @@
 #   session provider only, exactly like herdr/zellij, so it does. An
 #   auto-detected herdr or cmux spawn prints a loud stderr notice;
 #   auto-detected tmux stays silent; zellij and orca are never auto-detected.
+#   A --secondmate spawn on orca ADOPTS the provisioned home as the Orca
+#   worktree (fm_backend_orca_worktree_adopt; never `orca worktree create`)
+#   and hosts the coordinator in one fm-<id>-titled Orca terminal, failing
+#   closed on live, unproven, or ambiguous existing titled terminals.
 #   codex-app is not a known backend yet; docs/codex-app-backend.md owns that
 #   blocked backend contract. Default tmux spawns do not write backend= to meta;
 #   absent backend= means tmux. cmux does not support --secondmate spawns yet.
@@ -46,6 +50,18 @@
 #   the file governs the spawn, its model/effort tokens are re-resolved on every
 #   respawn exactly like the harness axis, and explicit --model/--effort flags
 #   still win over the file's tokens.
+#   Coordinator posture (docs/configuration.md "Coordinator posture"): a templated
+#   claude --secondmate spawn that still has neither model nor effort after the
+#   explicit flags and config tokens above launches as claude-fable-5 medium,
+#   applied as a pair; pinning either axis, a raw launch command, or any other
+#   harness disables the default, so explicit codex coordinators are untouched.
+#   Delivery posture (docs/configuration.md "Delivery posture"): a ship spawn
+#   whose data/<task-id>/delivery records rapid-local or peer-ship (written by
+#   fm-brief.sh or fm-promote.sh) persists that posture as delivery= in meta and
+#   maps the task's effective mode - rapid-local forces the guarded local-only
+#   path, peer-ship keeps the registered remote mode and refuses a local-only
+#   project. An unknown recorded value fails closed before any backend mutation.
+#   A ship task with NO record keeps legacy project-mode behavior unchanged.
 #   A --secondmate spawn also propagates the primary's declared inheritable config
 #   into the secondmate home's config/, so the secondmate's OWN crewmates,
 #   dispatch profiles, and backlog backend inherit the primary's settings
@@ -55,10 +71,13 @@
 #   provisioned firstmate home; the default is kind=ship.
 #   Before a secondmate launch, the home is locally fast-forwarded to the primary
 #   default-branch commit when safe; skipped syncs warn and launch unchanged.
+#   A bare registered project resolves only when it has one repo. Multi-repo
+#   project containers require the `<project>/<repo>` selector; explicit paths
+#   remain supported for deliberate non-registry workflows.
 #   Ship/scout spawns refuse to launch unless the resolved task path is a real
 #   git worktree root distinct from the primary project checkout.
-# Batch dispatch: pass one or more `id=repo` pairs instead of a single <id> <project>, e.g.
-#     fm-spawn.sh fix-a-k3=projects/foo add-b-q7=projects/bar [--scout]
+# Batch dispatch: pass one or more `id=project-or-project/repo` pairs instead of a single <id> <project>, e.g.
+#     fm-spawn.sh fix-a-k3=product/api add-b-q7=product/web [--scout]
 #   Each pair re-execs this script in single-task mode, so the single path stays the only
 #   source of truth; shared --scout/--harness/--model/--effort/--backend applies to every pair.
 #   If config/crew-dispatch.json exists, shared --harness is required for crewmate
@@ -84,7 +103,7 @@ set -eu
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
-  sed -n '2,78p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,91p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 case "${1:-}" in
@@ -95,9 +114,10 @@ FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
-PROJECTS="${FM_PROJECTS_OVERRIDE:-$FM_HOME/projects}"
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 SUB_HOME_MARKER=".fm-secondmate-home"
+# shellcheck source=bin/fm-projects-lib.sh
+. "$SCRIPT_DIR/fm-projects-lib.sh"
 # shellcheck source=bin/fm-ff-lib.sh
 . "$SCRIPT_DIR/fm-ff-lib.sh"
 # shellcheck source=bin/fm-config-inherit-lib.sh
@@ -176,10 +196,6 @@ else
 fi
 fm_backend_validate_spawn "$BACKEND" || exit 1
 fm_backend_source "$BACKEND" || exit 1
-if [ "$BACKEND" = orca ] && [ "$KIND" = secondmate ]; then
-  echo "error: backend=orca does not support --secondmate spawns yet" >&2
-  exit 1
-fi
 if [ "$BACKEND" = cmux ] && [ "$KIND" = secondmate ]; then
   echo "error: backend=cmux does not support --secondmate spawns yet" >&2
   exit 1
@@ -190,6 +206,10 @@ fi
 ORCA_ABORT_CLEANUP=0
 ORCA_WORKTREE_ID=
 ORCA_TERMINAL=
+# For kind=secondmate the Orca worktree IS the persistent home, adopted rather
+# than created; abort cleanup may close the terminal this spawn created but
+# must never remove the worktree.
+ORCA_PRESERVE_WORKTREE=0
 
 parse_orca_worktree_result() {
   local raw=$1 rest
@@ -215,6 +235,9 @@ orca_spawn_abort_cleanup() {
   if [ -n "${ORCA_TERMINAL:-}" ]; then
     fm_backend_kill orca "$ORCA_TERMINAL" 2>/dev/null || true
   fi
+  if [ "${ORCA_PRESERVE_WORKTREE:-0}" = 1 ]; then
+    return "$status"
+  fi
   if [ -n "${ORCA_WORKTREE_ID:-}" ]; then
     if ! fm_backend_remove_worktree orca "$ORCA_WORKTREE_ID" 2>/dev/null; then
       mkdir -p "$STATE" 2>/dev/null || true
@@ -227,6 +250,7 @@ orca_spawn_abort_cleanup() {
           echo "kind=$KIND"
           echo "mode=${MODE:-no-mistakes}"
           echo "yolo=${YOLO:-off}"
+          [ -z "${DELIVERY:-}" ] || echo "delivery=$DELIVERY"
           echo "tasktmp=${TASK_TMP:-}"
           echo "model=${MODEL:-default}"
           echo "effort=${EFFORT:-default}"
@@ -349,9 +373,11 @@ launch_template() {
   esac
 }
 
+LAUNCH_TEMPLATED=1
 case "$ARG3" in
   *' '*)  # raw launch command (unverified-adapter escape hatch)
     LAUNCH=$ARG3
+    LAUNCH_TEMPLATED=0
     HARNESS=""
     for word in $LAUNCH; do
       case "$word" in [A-Za-z_]*=*) continue ;; *) HARNESS=$(basename "$word"); break ;; esac
@@ -405,6 +431,18 @@ if [ "$KIND" = secondmate ] && [ -z "$ARG3" ]; then
       esac
     fi
   fi
+fi
+
+# Recommended coordinator posture (docs/configuration.md "Coordinator posture"):
+# a templated claude secondmate that still has neither a model nor an effort
+# after the explicit flags and config/secondmate-harness tokens above launches
+# as Fable 5 medium, applied as a pair. Pinning either axis disables the
+# default, raw launch commands are never touched, and every other harness
+# (an explicit codex coordinator included) launches exactly as before.
+if [ "$KIND" = secondmate ] && [ "$LAUNCH_TEMPLATED" -eq 1 ] && [ "$HARNESS" = claude ] \
+  && [ -z "$MODEL" ] && [ -z "$EFFORT" ]; then
+  MODEL=claude-fable-5
+  EFFORT=medium
 fi
 
 secondmate_registry_value() {
@@ -488,11 +526,7 @@ resolved_existing_dir() {
 }
 
 resolve_project_dir_arg() {
-  local path=$1
-  case "$path" in
-    projects/*) printf '%s/%s\n' "$PROJECTS" "${path#projects/}" ;;
-    *) printf '%s\n' "$path" ;;
-  esac
+  fm_project_resolve_arg "$1"
 }
 
 path_is_ancestor_of() {
@@ -607,9 +641,11 @@ if [ "$KIND" = secondmate ]; then
   # Local-HEAD sync: before launch, fast-forward this secondmate's worktree to the
   # PRIMARY checkout's current default-branch commit, so a freshly spawned or
   # recovery-respawned secondmate always runs the primary's version (AGENTS.md
-  # spawn section). Purely local - no fetch: the home is a worktree of this same
-  # repo and already holds the commit. ff-only and guarded; a dirty, diverged, or
-  # wrong-branch home is left untouched and launches as-is. The agent re-reads
+  # spawn section). No network dependency: a linked-worktree home already holds the
+  # commit, while a standalone clone missing it has the commit acquired from the
+  # trusted local primary repository over the filesystem (fm-ff-lib.sh). ff-only
+  # and guarded; a dirty, diverged, or wrong-branch home is left untouched and
+  # launches as-is. The agent re-reads
   # AGENTS.md fresh on launch, so no nudge is needed here.
   if sm_primary_head=$(primary_head_commit "$FM_ROOT"); then
     sm_ff_out=$(ff_target "$PROJ_ABS" "secondmate $ID" "$sm_primary_head" yes yes 2>&1 || true)
@@ -640,10 +676,57 @@ if [ "$KIND" = secondmate ]; then
   fi
 else
   PROJ_ABS="$(cd "$(resolve_project_dir_arg "$PROJ")" && pwd)"
+  PROJECT_NAME=$(fm_project_name_from_arg "$PROJ" 2>/dev/null || fm_project_name_for_path "$PROJ_ABS" 2>/dev/null || basename "$PROJ_ABS")
   WT=""
   BRIEF="$DATA/$ID/brief.md"
 fi
 [ -f "$BRIEF" ] || { echo "error: no brief at $BRIEF" >&2; exit 1; }
+
+# Delivery posture record (see header; docs/configuration.md "Delivery
+# posture"). Read and validate before any backend mutation so an unknown value
+# fails closed with nothing to clean up. Absent record = legacy behavior.
+DELIVERY=
+if [ "$KIND" = ship ] && [ -f "$DATA/$ID/delivery" ]; then
+  DELIVERY=$(tr -d '[:space:]' < "$DATA/$ID/delivery" || true)
+  case "$DELIVERY" in
+    rapid-local|peer-ship) ;;
+    *)
+      echo "error: data/$ID/delivery records unknown delivery posture '${DELIVERY:-}' (expected rapid-local or peer-ship); fix the record before spawning" >&2
+      exit 1
+      ;;
+  esac
+fi
+
+# Per-project delivery mode + yolo flag (bin/fm-project-mode.sh; AGENTS.md project
+# management and task lifecycle). Resolved before any backend mutation so a
+# posture/mode conflict fails closed with nothing to clean up; recorded in meta so
+# fm-teardown's safety check and the validate/merge stages can branch on them.
+# Mode governs ship tasks; a scout's deliverable is a report, not a merge, so
+# scout teardown ignores mode.
+SECONDMATE_PROJECTS=
+if [ "$KIND" = secondmate ]; then
+  MODE=secondmate
+  YOLO=off
+  SECONDMATE_PROJECTS=$(secondmate_registry_value "$ID" projects || true)
+else
+  read -r MODE YOLO <<EOF
+$("$FM_ROOT/bin/fm-project-mode.sh" "$PROJECT_NAME")
+EOF
+fi
+# Delivery posture mapping: rapid-local forces the task's effective mode onto
+# the guarded local-only path; peer-ship keeps the registered remote mode and
+# refuses a project that has none.
+if [ -n "$DELIVERY" ]; then
+  case "$DELIVERY" in
+    rapid-local) MODE=local-only ;;
+    peer-ship)
+      if [ "$MODE" = local-only ]; then
+        echo "error: delivery posture peer-ship needs a remote-capable delivery mode, but project $PROJECT_NAME is registered local-only; use rapid-local or change the project mode" >&2
+        exit 1
+      fi
+      ;;
+  esac
+fi
 
 # PROJ_ABS can still carry a symlinked path component (e.g. macOS's /tmp ->
 # /private/tmp) when it came from the ship/scout branch's logical `pwd` above.
@@ -768,29 +851,83 @@ EOF
     T="$CMUX_WORKSPACE_ID:$CMUX_SURFACE_ID"
     ;;
   orca)
-    set +e
-    ORCA_WT_RAW=$(fm_backend_orca_worktree_create "$PROJ_ABS" "$W")
-    ORCA_WT_STATUS=$?
-    set -e
-    if [ "$ORCA_WT_STATUS" -ne 0 ]; then
-      if [ "$ORCA_WT_STATUS" -eq 2 ] && [ -n "$ORCA_WT_RAW" ]; then
-        if parse_orca_worktree_result "$ORCA_WT_RAW" && [ -n "$ORCA_WORKTREE_ID" ]; then
-          ORCA_ABORT_CLEANUP=1
-        fi
-      fi
-      exit 1
-    fi
-    parse_orca_worktree_result "$ORCA_WT_RAW" || true
-    ORCA_ABORT_CLEANUP=1
-    if [ -z "$ORCA_WORKTREE_ID" ] || [ -z "$WT" ]; then
-      echo "error: orca did not return a worktree id/path for $W" >&2
-      exit 1
-    fi
-    validate_spawn_worktree "orca worktree create" "$W"
-    if [ -z "$ORCA_TERMINAL" ]; then
+    if [ "$KIND" = secondmate ]; then
+      # Native Orca secondmate hosting (docs/orca-backend.md "Secondmate
+      # hosting"): the already-provisioned home IS the Orca worktree - adopt
+      # and verify it, never create a duplicate worktree or branch. One
+      # coordinator terminal per home, titled fm-<id>; an existing titled
+      # terminal is reused only by clearing it when its agent is CONFIDENTLY
+      # dead, and anything live, unproven, or ambiguous fails closed so a
+      # duplicate coordinator can never launch.
+      ORCA_PRESERVE_WORKTREE=1
+      ORCA_ADOPT_RAW=$(fm_backend_orca_worktree_adopt "$PROJ_ABS") || exit 1
+      ORCA_WORKTREE_ID=${ORCA_ADOPT_RAW%%$'\t'*}
+      [ -n "$ORCA_WORKTREE_ID" ] || { echo "error: orca did not resolve a worktree id for home $PROJ_ABS" >&2; exit 1; }
+      set +e
+      ORCA_EXISTING_TERMINAL=$(fm_backend_orca_terminal_find "$PROJ_ABS" "$W")
+      ORCA_FIND_STATUS=$?
+      set -e
+      case "$ORCA_FIND_STATUS" in
+        0)
+          ORCA_EXISTING_VERDICT=$(fm_backend_orca_agent_alive "$ORCA_EXISTING_TERMINAL")
+          case "$ORCA_EXISTING_VERDICT" in
+            dead)
+              fm_backend_orca_kill "$ORCA_EXISTING_TERMINAL" 2>/dev/null || true
+              ;;
+            alive)
+              echo "error: secondmate $ID already has a live coordinator terminal $ORCA_EXISTING_TERMINAL in $PROJ_ABS; refusing a duplicate launch (attach with bin/secondmate instead)" >&2
+              exit 1
+              ;;
+            *)
+              echo "error: existing coordinator terminal $ORCA_EXISTING_TERMINAL in $PROJ_ABS has unproven agent liveness; inspect it (bin/fm-peek.sh or the Orca app) before relaunching" >&2
+              exit 1
+              ;;
+          esac
+          ;;
+        1) : ;;
+        *)
+          echo "error: ambiguous fm-$ID coordinator terminals in Orca worktree $PROJ_ABS; close the duplicates before launching" >&2
+          exit 1
+          ;;
+      esac
       ORCA_TERMINAL=$(fm_backend_orca_terminal_create "$ORCA_WORKTREE_ID" "$W") || exit 1
+      ORCA_ABORT_CLEANUP=1
+      # Concurrent-duplicate backstop: if another launch raced past the check
+      # above, the home now holds two titled terminals - close ours and fail.
+      set +e
+      fm_backend_orca_terminal_find "$PROJ_ABS" "$W" >/dev/null 2>&1
+      ORCA_RECHECK_STATUS=$?
+      set -e
+      if [ "$ORCA_RECHECK_STATUS" -eq 2 ]; then
+        echo "error: concurrent duplicate launch detected for fm-$ID in $PROJ_ABS; closing this terminal and failing closed" >&2
+        exit 1
+      fi
+      T="$ORCA_TERMINAL"
+    else
+      set +e
+      ORCA_WT_RAW=$(fm_backend_orca_worktree_create "$PROJ_ABS" "$W")
+      ORCA_WT_STATUS=$?
+      set -e
+      if [ "$ORCA_WT_STATUS" -ne 0 ]; then
+        if [ "$ORCA_WT_STATUS" -eq 2 ] && [ -n "$ORCA_WT_RAW" ]; then
+          if parse_orca_worktree_result "$ORCA_WT_RAW" && [ -n "$ORCA_WORKTREE_ID" ]; then
+            ORCA_ABORT_CLEANUP=1
+          fi
+        fi
+        exit 1
+      fi
+      parse_orca_worktree_result "$ORCA_WT_RAW" || true
+      ORCA_ABORT_CLEANUP=1
+      if [ -z "$ORCA_WORKTREE_ID" ] || [ -z "$WT" ]; then
+        echo "error: orca did not return a worktree id/path for $W" >&2
+        exit 1
+      fi
+      validate_spawn_worktree "orca worktree create" "$W"
+      if [ -z "$ORCA_TERMINAL" ]; then
+        ORCA_TERMINAL=$(fm_backend_orca_terminal_create "$ORCA_WORKTREE_ID" "$W") || exit 1
+      fi
+      T="$ORCA_TERMINAL"
     fi
-    T="$ORCA_TERMINAL"
     ;;
 esac
 # #134 robustness: only tmux needs a worktree-detection target distinct from $T -
@@ -972,22 +1109,6 @@ EOF
   esac
 fi
 
-# Per-project delivery mode + yolo flag (bin/fm-project-mode.sh; AGENTS.md project management and task lifecycle).
-# Recorded in meta so fm-teardown's safety check and the validate/merge stages can
-# branch on them. Mode governs ship tasks; a scout's deliverable is a report, not a
-# merge, so scout teardown ignores mode.
-SECONDMATE_PROJECTS=
-if [ "$KIND" = secondmate ]; then
-  MODE=secondmate
-  YOLO=off
-  SECONDMATE_PROJECTS=$(secondmate_registry_value "$ID" projects || true)
-else
-  PROJ_NAME=$(basename "$PROJ_ABS")
-  read -r MODE YOLO <<EOF
-$("$FM_ROOT/bin/fm-project-mode.sh" "$PROJ_NAME")
-EOF
-fi
-
 META_WINDOW=$T
 [ "$BACKEND" = orca ] && META_WINDOW=$W
 {
@@ -998,6 +1119,9 @@ META_WINDOW=$T
   echo "kind=$KIND"
   echo "mode=$MODE"
   echo "yolo=$YOLO"
+  # delivery= is written only for a ship task with a recorded posture, so every
+  # other task's meta stays byte-identical (absent delivery= means legacy).
+  [ -z "$DELIVERY" ] || echo "delivery=$DELIVERY"
   echo "tasktmp=$TASK_TMP"
   echo "model=${MODEL:-default}"
   echo "effort=${EFFORT:-default}"

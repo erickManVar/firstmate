@@ -1032,6 +1032,13 @@ fi
 
 if [ "$BACKEND" != orca ]; then
   fm_backend_kill "$BACKEND" "$T" "$(meta_value "$META" zellij_tab_id)" "fm-$ID" 2>/dev/null || true
+elif [ "$KIND" = secondmate ]; then
+  # An Orca-hosted secondmate owns no disposable Orca worktree - its worktree
+  # IS the persistent home, adopted at spawn (docs/orca-backend.md "Secondmate
+  # hosting"). Close only the recorded coordinator terminal here; the home
+  # itself is removed below by the same guarded path every secondmate uses,
+  # and `orca worktree rm` must never run for it.
+  [ -z "${T_ORCA:-}" ] || fm_backend_kill orca "$T" 2>/dev/null || true
 fi
 if [ "$KIND" = secondmate ]; then
   [ -n "$HOME_PATH" ] || HOME_PATH=$WT

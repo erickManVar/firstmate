@@ -440,6 +440,11 @@ test_whole_fleet_form() {
   behind=$(build_pair "$home" fleet-behind)
   advance_origin "$home" fleet-behind C1
   current=$(build_pair "$home" fleet-current)
+  mkdir -p "$home/data"
+  cat > "$home/data/projects.md" <<'EOF'
+- fleet-behind [no-mistakes] - behind fixture (added 2026-07-13)
+- fleet-current [no-mistakes] - current fixture (added 2026-07-13)
+EOF
 
   # Whole-fleet form: no project-dir argument.
   out=$(run_sync "$home")
@@ -447,7 +452,7 @@ test_whole_fleet_form() {
   assert_contains "$out" "fleet-behind: synced" "whole-fleet form syncs a behind clone"
   assert_contains "$out" "fleet-current: already current" "whole-fleet form reports a current clone"
   : "$behind $current"
-  pass "whole-fleet form processes every clone under projects/"
+  pass "whole-fleet form processes every registry-listed clone"
 }
 
 test_bootstrap_relays_recovered_and_stuck() {
@@ -460,6 +465,11 @@ test_bootstrap_relays_recovered_and_stuck() {
   rec=$(build_pair "$home" rec-clone)
   advance_origin "$home" rec-clone C1
   git -C "$rec" checkout --detach --quiet
+  mkdir -p "$home/data"
+  cat > "$home/data/projects.md" <<'EOF'
+- stuck-clone [no-mistakes] - stuck fixture (added 2026-07-13)
+- rec-clone [no-mistakes] - recovery fixture (added 2026-07-13)
+EOF
 
   # Full bootstrap: no state/ dir -> secondmate sync no-ops; no .env -> X mode off.
   # We only assert the fleet-sync relay lines; other detect lines are irrelevant.
@@ -532,6 +542,7 @@ test_live_git_cwd_in_clone_dir_blocks_removal() {
   home=$(new_home)
   fakebin="$home/fb-lockcwd"; rm -rf "$fakebin"; mkdir -p "$fakebin"
   clone=$(build_packed_prunable "$home" lockcwd)
+  clone=$(cd "$clone" && pwd -P)
   plant_packed_refs_lock "$clone"
   # Nobody holds the lock file, but a live process holds the clone worktree as its
   # cwd - the narrow race where git closed packed-refs.lock but has not yet exited.

@@ -136,6 +136,28 @@ fm_backend_tmux_current_command() {  # <target>
   tmux display-message -p -t "$1" '#{pane_current_command}' 2>/dev/null
 }
 
+# fm_backend_tmux_is_version_command: true when <comm> is a bare dotted-numeric
+# version token such as "2.1.208" - only digits and dots, at least one dot, a
+# leading digit. This is the process name a harness reports when it renames its
+# own foreground process to its version string rather than keeping its binary
+# name: observed live 2026-07-14 with Claude 2.1.208, whose pane reported
+# `pane_current_command=2.1.208` (docs/tmux-backend.md "Agent liveness probe").
+# Rejects interpreter-with-minor-version forms like "python3.11" (leading
+# letter) and anything carrying a non-version character, so only a pure version
+# token qualifies.
+fm_backend_tmux_is_version_command() {  # <comm>
+  local s=$1
+  case "$s" in
+    *[!0-9.]*) return 1 ;;  # only digits and dots may appear
+    *.*) ;;                 # and there must be at least one dot
+    *) return 1 ;;
+  esac
+  case "$s" in
+    [0-9]*) return 0 ;;     # reject degenerate leading-dot forms (".", ".1")
+    *) return 1 ;;
+  esac
+}
+
 # fm_backend_tmux_agent_alive: CONFIDENT liveness of a live harness-agent
 # PROCESS in <target>'s pane, distinct from fm_backend_target_exists's
 # pane-PRESENCE-only check (a pane that still exists but is sitting at a bare
@@ -144,7 +166,12 @@ fm_backend_tmux_current_command() {  # <target>
 # "Agent liveness probe" for the empirical basis. Prints one of:
 #   alive   - the foreground command is one of the verified harness binaries
 #             (claude, codex, opencode, grok - each confirmed to run as its
-#             own process name, never wrapped by a generic interpreter).
+#             own process name, never wrapped by a generic interpreter), OR a
+#             bare dotted-numeric version token (fm_backend_tmux_is_version_command):
+#             a harness that renamed its own process to its version string, as
+#             Claude 2.1.208 does live. Classifying a version token alive is
+#             safe under this probe's correctness bar (a false alive never
+#             respawns; only a false dead does - docs/tmux-backend.md).
 #   dead    - the foreground command is a bare shell: nothing is running in
 #             the pane, so a prior agent process has exited.
 #   unknown - anything else, INCLUDING a bare "node"/"python" interpreter
@@ -159,9 +186,13 @@ fm_backend_tmux_agent_alive() {  # <target>
   comm=$(fm_backend_tmux_current_command "$target") || { printf 'unknown'; return 0; }
   comm=${comm#-}
   case "$comm" in
-    '') printf 'unknown' ;;
-    *claude*|*codex*|*opencode*|*grok*) printf 'alive' ;;
-    zsh|bash|sh|dash|ash|ksh|mksh|tcsh|csh|fish) printf 'dead' ;;
-    *) printf 'unknown' ;;
+    '') printf 'unknown'; return 0 ;;
+    *claude*|*codex*|*opencode*|*grok*) printf 'alive'; return 0 ;;
+    zsh|bash|sh|dash|ash|ksh|mksh|tcsh|csh|fish) printf 'dead'; return 0 ;;
   esac
+  if fm_backend_tmux_is_version_command "$comm"; then
+    printf 'alive'
+  else
+    printf 'unknown'
+  fi
 }

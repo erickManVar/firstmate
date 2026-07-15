@@ -48,7 +48,7 @@ process.exit(1);
 '
 }
 
-fm_backend_orca_json_get() {  # <field> ; fields: worktree-id worktree-path terminal-handle worktree-terminal-handle repo-id
+fm_backend_orca_json_get() {  # <field> ; fields: worktree-id worktree-path terminal-handle worktree-terminal-handle repo-id terminal-worktree-path
   # Terminal handles are accepted only from verified terminal result shapes:
   # result.terminal or a root terminal object with .handle. Undocumented
   # result.id and result.worktree.terminal shapes are ignored until a real Orca
@@ -81,6 +81,7 @@ if (field === "worktree-path") v = wt.path || (wt.git && wt.git.path) || r.path 
 if (field === "terminal-handle") v = handle(explicitTerm || r) || "";
 if (field === "worktree-terminal-handle") v = handle(explicitTerm) || "";
 if (field === "repo-id") v = repo.id || repo.repoId || r.repoId || "";
+if (field === "terminal-worktree-path") v = scalar((r.terminal || {}).worktreePath) || "";
 if (!v) process.exit(1);
 process.stdout.write(String(v));
 ' "$field"
@@ -152,6 +153,147 @@ fm_backend_orca_worktree_create() {  # <project-path> <name>
   }
   printf '%s\t%s' "$wt_id" "$wt_path"
   [ -z "$terminal" ] || printf '\t%s' "$terminal"
+}
+
+# fm_backend_orca_worktree_adopt: resolve an EXISTING directory (a persistent
+# secondmate home) as an Orca worktree WITHOUT creating anything. Registers the
+# directory as an Orca repo when it is not yet registered (`orca repo add
+# --path` makes the directory itself the repo's main worktree), then resolves
+# it with `orca worktree show --worktree path:<dir>`. Fails closed when Orca
+# resolves the selector to a different physical path than the directory itself
+# (an ambiguous or aliased worktree must never be adopted as a home). Prints
+# "<worktree-id>\t<physical-path>". Never calls `orca worktree create` or
+# `orca worktree rm`.
+fm_backend_orca_worktree_adopt() {  # <home-path>
+  local home=$1 home_real out wt_id wt_path path_real
+  home_real=$(cd "$home" 2>/dev/null && pwd -P) || {
+    echo "error: cannot adopt Orca worktree: home does not exist: $home" >&2
+    return 1
+  }
+  fm_backend_orca_tool_check || return 1
+  fm_backend_orca_repo_ensure "$home_real" >/dev/null || return 1
+  out=$(orca worktree show --worktree "path:$home_real" --json) || return 1
+  wt_id=$(printf '%s' "$out" | fm_backend_orca_json_get worktree-id) || {
+    echo "error: orca worktree show did not return a worktree id for $home_real" >&2
+    return 1
+  }
+  wt_path=$(printf '%s' "$out" | fm_backend_orca_json_get worktree-path) || {
+    echo "error: orca worktree show did not return a path for $home_real" >&2
+    return 1
+  }
+  path_real=$(cd "$wt_path" 2>/dev/null && pwd -P) || path_real=$wt_path
+  if [ "$path_real" != "$home_real" ]; then
+    echo "error: Orca resolved worktree path '$wt_path' does not match the home '$home_real'; refusing to adopt an ambiguous worktree" >&2
+    return 1
+  fi
+  printf '%s\t%s' "$wt_id" "$home_real"
+}
+
+# fm_backend_orca_terminal_find: the live Orca terminal titled exactly <title>
+# in the worktree at <worktree-path>. Exit codes are the caller's decision
+# procedure: 0 prints the single matching handle, 1 means no match (create
+# one), 2 means duplicates or an unreadable list (fail closed, never guess).
+fm_backend_orca_terminal_find() {  # <worktree-path> <title>
+  local path=$1 title=$2 out
+  fm_backend_orca_tool_check || return 2
+  out=$(orca terminal list --worktree "path:$path" --limit 200 --json) || return 2
+  # shellcheck disable=SC2016  # Single quotes are deliberate: ${...} belongs to the Node template literal.
+  printf '%s' "$out" | node -e '
+const fs = require("fs");
+const title = process.argv[1];
+let data;
+try {
+  data = JSON.parse(fs.readFileSync(0, "utf8"));
+} catch (err) {
+  console.error("invalid Orca terminal list JSON: " + err.message);
+  process.exit(2);
+}
+if (data.ok === false) {
+  const msg = data.error && (data.error.message || data.error.code);
+  if (msg) console.error(msg);
+  process.exit(2);
+}
+const r = data.result || {};
+const terminals = Array.isArray(r.terminals) ? r.terminals : [];
+const matches = terminals.filter(t => t && t.title === title && typeof t.handle === "string" && t.handle);
+if (matches.length === 0) process.exit(1);
+if (matches.length > 1) {
+  console.error(`ambiguous: ${matches.length} Orca terminals titled ${title}`);
+  process.exit(2);
+}
+process.stdout.write(matches[0].handle);
+' "$title"
+}
+
+# fm_backend_orca_is_version_command: true when <comm> is a bare dotted-numeric
+# version token; mirrors fm_backend_tmux_is_version_command (bin/backends/
+# tmux.sh), the empirically-verified rule for a harness that renames its own
+# process to its version string (observed live: Claude 2.1.208/2.1.209).
+fm_backend_orca_is_version_command() {  # <comm>
+  local s=$1
+  case "$s" in
+    *[!0-9.]*) return 1 ;;
+    *.*) ;;
+    *) return 1 ;;
+  esac
+  case "$s" in
+    [0-9]*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# fm_backend_orca_agent_alive: CONFIDENT liveness of a harness-agent process
+# behind <terminal-id>. Orca's CLI exposes no foreground-process primitive
+# (verified: `terminal show` carries no process info and `terminal wait --for
+# exit` times out even on an idle shell), so this ports the tmux classifier's
+# semantics to the OS level: the terminal's recorded worktreePath is read from
+# `orca terminal show`, then `lsof -a -d cwd` enumerates the processes rooted
+# in that path (the pane shell that launched the agent AND the agent itself
+# both keep their cwd there). Classification, alive-first so a live agent's
+# parent shell can never read as dead:
+#   alive   - any comm names a verified harness binary (claude/codex/opencode/
+#             grok) or is a bare version token (a version-renamed harness).
+#   dead    - at least one process and ALL comms are bare shells: the agent
+#             exited and left only its pane shell, the same evidence tmux's
+#             foreground-command probe uses.
+#   unknown - anything else: no process rooted there, an ambiguous interpreter
+#             (pi runs as bare "node"), an empty worktreePath, an unreadable
+#             terminal, or a missing lsof. Never a license to act.
+# Scope caveat: the probe is cwd-scoped to the WORKTREE, not the single
+# terminal, so any harness process rooted in the home reads alive - the safe
+# direction (a false alive never respawns; only a false dead could duplicate).
+fm_backend_orca_agent_alive() {  # <terminal-id>
+  local terminal=$1 out path path_real recs line comm saw_any=0 saw_other=0
+  fm_backend_orca_tool_check 2>/dev/null || { printf 'unknown'; return 0; }
+  command -v lsof >/dev/null 2>&1 || { printf 'unknown'; return 0; }
+  out=$(orca terminal show --terminal "$terminal" --json 2>/dev/null) || { printf 'unknown'; return 0; }
+  path=$(printf '%s' "$out" | fm_backend_orca_json_get terminal-worktree-path 2>/dev/null) || path=""
+  [ -n "$path" ] || { printf 'unknown'; return 0; }
+  path_real=$(cd "$path" 2>/dev/null && pwd -P) || { printf 'unknown'; return 0; }
+  recs=$(lsof -a -d cwd -Fpc -- "$path_real" 2>/dev/null) || recs=""
+  while IFS= read -r line; do
+    case "$line" in c*) ;; *) continue ;; esac
+    comm=${line#c}
+    comm=${comm#-}
+    [ -n "$comm" ] || continue
+    saw_any=1
+    case "$comm" in
+      *claude*|*codex*|*opencode*|*grok*) printf 'alive'; return 0 ;;
+      zsh|bash|sh|dash|ash|ksh|mksh|tcsh|csh|fish) continue ;;
+    esac
+    if fm_backend_orca_is_version_command "$comm"; then
+      printf 'alive'
+      return 0
+    fi
+    saw_other=1
+  done <<EOF
+$recs
+EOF
+  if [ "$saw_any" -eq 1 ] && [ "$saw_other" -eq 0 ]; then
+    printf 'dead'
+  else
+    printf 'unknown'
+  fi
 }
 
 fm_backend_orca_terminal_create() {  # <worktree-id> <title>

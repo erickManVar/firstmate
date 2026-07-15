@@ -639,6 +639,60 @@ test_fleet_sync_timeout_is_computed_before_launch() {
   pass "bootstrap computes the timeout before launching fleet sync"
 }
 
+test_shared_home_role_sync_failure_is_visible() {
+  local case_dir home fakebin out
+  case_dir="$TMP_ROOT/shared-home-role-diagnostic"
+  home="$case_dir/home"
+  mkdir -p "$home/config" "$home/data" "$case_dir/orca"
+  printf '%s\n' manual > "$home/config/backlog-backend"
+  printf '%s\n' "$case_dir/orca" > "$home/config/projects-root"
+  printf '%s\n' '- alpha [direct-PR] - alpha (repos: api; added 2026-07-13)' > "$home/data/projects.md"
+  fakebin=$(make_fake_toolchain "$case_dir")
+
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+
+  assert_contains "$out" \
+    "FLEET_SYNC: fm-projects: error: shared project synchronization requires $home/config/home-role containing exactly primary or secondmate" \
+    "bootstrap did not surface the shared home-role migration guidance"
+  assert_contains "$out" \
+    "FLEET_SYNC: fleet: error: shared synchronization authorization failed; set $home/config/home-role to exactly primary, or exactly secondmate for a seeded secondmate home" \
+    "bootstrap did not surface actionable shared home-role migration guidance"
+
+  printf 'primary\n\n' > "$home/config/home-role"
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$ROOT" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  assert_contains "$out" \
+    "FLEET_SYNC: fleet: error: shared synchronization authorization failed; set $home/config/home-role to exactly primary, or exactly secondmate for a seeded secondmate home" \
+    "bootstrap did not surface malformed shared home-role migration guidance"
+  pass "bootstrap relays fail-closed shared home-role synchronization errors"
+}
+
+test_successful_fleet_sync_stderr_remains_silent() {
+  local case_dir home fake_root fakebin out
+  case_dir="$TMP_ROOT/fleet-sync-success-stderr"
+  home="$case_dir/home"
+  fake_root="$case_dir/fake-root"
+  mkdir -p "$home/config" "$home/projects" "$fake_root/bin"
+  printf '%s\n' manual > "$home/config/backlog-backend"
+  cat > "$fake_root/bin/fm-fleet-sync.sh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' 'alpha: skipped: no origin remote'
+printf '%s\n' 'ordinary fleet-sync stderr' >&2
+SH
+  chmod +x "$fake_root/bin/fm-fleet-sync.sh"
+  fakebin=$(make_fake_toolchain "$case_dir")
+
+  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$fake_root" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+
+  assert_contains "$out" 'FLEET_SYNC: alpha: skipped: no origin remote' \
+    "bootstrap did not relay successful fleet-sync stdout"
+  assert_not_contains "$out" 'ordinary fleet-sync stderr' \
+    "bootstrap relayed fleet-sync stderr despite success"
+  pass "bootstrap keeps successful fleet-sync stderr silent"
+}
+
 test_crew_dispatch_active_rules_are_surfaced() {
   local case_dir fakebin out expect
   case_dir="$TMP_ROOT/dispatch-active"
@@ -711,5 +765,7 @@ test_fleet_sync_timeout_floor_preserves_small_fleets
 test_fleet_sync_timeout_explicit_override_wins
 test_fleet_sync_timeout_empty_override_uses_default
 test_fleet_sync_timeout_is_computed_before_launch
+test_shared_home_role_sync_failure_is_visible
+test_successful_fleet_sync_stderr_remains_silent
 test_crew_dispatch_active_rules_are_surfaced
 test_crew_dispatch_validation

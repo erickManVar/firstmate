@@ -461,10 +461,11 @@ spawn_secondmate_capture() {
     "$ROOT/bin/fm-spawn.sh" "$id" "$home" "$@" --secondmate
 }
 
-# A bare "<harness>" secondmate-harness file (today's format) must launch with
-# NO --model/--effort flag at all, and meta must keep recording model=default,
-# effort=default - the core backward-compat requirement of the new format.
-test_spawn_bare_harness_no_model_effort_flag() {
+# A bare "claude" secondmate-harness file resolves harness-only tokens, and the
+# spawn then applies the recommended coordinator posture pair - Fable 5 medium -
+# because neither axis was pinned from any source (docs/configuration.md
+# "Coordinator posture").
+test_spawn_bare_claude_gets_coordinator_posture() {
   local w sm meta launchlog launch out status
   w="$TMP_ROOT/spawn-bare-tokens"
   sm="$w/sm"
@@ -477,12 +478,36 @@ test_spawn_bare_harness_no_model_effort_flag() {
   expect_code 0 "$status" "bare-harness secondmate spawn should succeed"
 
   meta="$w/home/state/sm.meta"
-  [ "$(meta_field "$meta" model)" = default ] || fail "bare-tokens: meta model not default (got '$(meta_field "$meta" model)')"
-  [ "$(meta_field "$meta" effort)" = default ] || fail "bare-tokens: meta effort not default (got '$(meta_field "$meta" effort)')"
+  [ "$(meta_field "$meta" model)" = claude-fable-5 ] || fail "bare-claude: meta model not claude-fable-5 (got '$(meta_field "$meta" model)')"
+  [ "$(meta_field "$meta" effort)" = medium ] || fail "bare-claude: meta effort not medium (got '$(meta_field "$meta" effort)')"
   launch=$(cat "$launchlog")
-  assert_not_contains "$launch" "--model" "bare-tokens: launch must not carry a --model flag"
-  assert_not_contains "$launch" "--effort" "bare-tokens: launch must not carry an --effort flag"
-  pass "C2 spawn: a bare harness-only secondmate-harness file launches with no model/effort flag (backward-compat)"
+  assert_contains "$launch" "claude --dangerously-skip-permissions --model 'claude-fable-5' --effort 'medium'" \
+    "bare-claude: launch did not carry the coordinator posture pair"
+  pass "C2 spawn: a bare claude secondmate-harness file launches on the Fable 5 medium coordinator posture"
+}
+
+# The coordinator posture is claude-only: a bare codex secondmate-harness file
+# keeps launching with NO injected model/effort flag, preserving the explicit
+# codex coordinator path byte-for-byte.
+test_spawn_bare_codex_gets_no_posture_injection() {
+  local w sm meta launchlog launch out status
+  w="$TMP_ROOT/spawn-bare-codex"
+  sm="$w/sm"
+  launchlog="$w/launch.log"
+  mkdir -p "$w/home/config"
+  printf 'codex\n' > "$w/home/config/secondmate-harness"
+  make_seeded_home "$sm" sm
+
+  out=$(spawn_secondmate_capture "$w" sm "$sm" "$launchlog" 2>&1); status=$?
+  expect_code 0 "$status" "bare-codex secondmate spawn should succeed"
+
+  meta="$w/home/state/sm.meta"
+  [ "$(meta_field "$meta" model)" = default ] || fail "bare-codex: meta model not default (got '$(meta_field "$meta" model)')"
+  [ "$(meta_field "$meta" effort)" = default ] || fail "bare-codex: meta effort not default (got '$(meta_field "$meta" effort)')"
+  launch=$(cat "$launchlog")
+  assert_not_contains "$launch" "--model" "bare-codex: launch must not carry a --model flag"
+  assert_not_contains "$launch" "model_reasoning_effort" "bare-codex: launch must not carry an effort config"
+  pass "C2b spawn: a bare codex secondmate-harness file launches with no injected model/effort (codex untouched)"
 }
 
 # "<harness> <model>" durably threads --model into the secondmate launch and
@@ -1023,7 +1048,8 @@ test_spawn_backward_compat_crew_fallback
 test_spawn_bare_backward_compat
 test_spawn_explicit_harness_wins
 test_spawn_unverified_secondmate_harness_refused
-test_spawn_bare_harness_no_model_effort_flag
+test_spawn_bare_claude_gets_coordinator_posture
+test_spawn_bare_codex_gets_no_posture_injection
 test_spawn_secondmate_harness_model_token
 test_spawn_secondmate_harness_model_and_effort_tokens
 test_spawn_explicit_model_overrides_secondmate_harness_token

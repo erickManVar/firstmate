@@ -32,10 +32,10 @@ See [`docs/cmux-backend.md`](cmux-backend.md#runtime-auto-detection) for why cmu
 Auto-detected herdr or cmux prints a stderr notice naming `config/backend` and `--backend tmux` as opt-outs; auto-detected tmux stays silent to preserve existing default behavior.
 Zellij and Orca are never auto-detected; select them by putting the name in a local `config/backend` file, by exporting `FM_BACKEND=<name>`, or by telling the first mate in chat.
 Any value other than `tmux`, `herdr`, `zellij`, `orca`, or `cmux` is rejected until another adapter is implemented and verified.
-`fm-spawn.sh` accepts `tmux`, `herdr`, `zellij`, `orca`, and `cmux` for ship and scout tasks; `backend=orca` and `backend=cmux` both still refuse `--secondmate` until secondmate launch semantics are designed for each.
+`fm-spawn.sh` accepts `tmux`, `herdr`, `zellij`, `orca`, and `cmux` for ship and scout tasks; `--secondmate` spawns run on `tmux`, `herdr`, `zellij`, and `orca` (which adopts the provisioned home as its Orca worktree; `docs/orca-backend.md` "Secondmate hosting"), while `backend=cmux` still refuses `--secondmate` until its secondmate launch semantics are designed.
 `codex-app` is not an accepted runtime backend yet; [`docs/codex-app-backend.md`](codex-app-backend.md) owns the Codex App boundary.
 The session-start secondmate liveness sweep uses a deeper `fm_backend_agent_alive` probe where verified.
-Today that probe can classify tmux and herdr secondmate endpoints as `alive`, `dead`, or `unknown`; zellij, Orca, and cmux report `unknown` until their own agent-process classifiers are verified.
+Today that probe can classify tmux, herdr, and Orca secondmate endpoints as `alive`, `dead`, or `unknown`; zellij and cmux report `unknown` until their own agent-process classifiers are verified.
 A herdr spawn additionally version-gates against the installed `herdr` binary's protocol and requires `jq`, refusing loudly on an incompatible or missing installation.
 A zellij spawn additionally version-gates against the installed `zellij` binary's version and requires `jq`, refusing loudly when either is missing or the version is older than 0.44.
 A cmux spawn additionally version-gates against the installed `cmux` binary's version, requires `jq`, and requires the control socket to be reachable and accessible (see [`docs/cmux-backend.md`](cmux-backend.md) "Setup" for the one-time socket-access configuration this needs; Automation mode is the recommended socket control mode, with Password mode supported via `config/cmux-socket-password`), refusing loudly and non-retryably on a `cmuxOnly`/unauthenticated socket.
@@ -105,10 +105,10 @@ The file is created lazily on first learning and follows the same dated, evidenc
 ## Secondmate routes (data/secondmates.md)
 
 Persistent secondmate routes live locally in `data/secondmates.md`.
-Each line records the secondmate id, charter summary, absolute home path, natural-language scope, project clone list, and added date; `fm-home-seed.sh validate` refuses duplicate ids, duplicate homes, and nested or overlapping homes.
-The main first mate routes by reading those scopes with judgment; the project list is provisioning data, not exclusive ownership.
+Each line records the secondmate id, charter summary, absolute home path, natural-language scope, project access list, and added date; `fm-home-seed.sh validate` refuses duplicate ids, duplicate homes, and nested or overlapping homes.
+The main first mate routes by reading those scopes with judgment; the project list is access data, not exclusive ownership.
 Use `fm-home-seed.sh <id> - {<project>...|--no-projects}` to lease a fresh firstmate worktree for the secondmate home.
-Use the deliberate `--no-projects` signal only for a firstmate-repo domain that needs no separate project clones.
+Use the deliberate `--no-projects` signal only for a firstmate-repo domain that needs no separate project access.
 It cannot be combined with a project list, and omitting both still fails loudly.
 A project-less seed requires no existing project clones or `data/projects.md` entries in the home, so it refuses a populated-home conversion without changing that home.
 A preexisting project-bearing charter is also refused until it is re-scaffolded with `--no-projects` or removed.
@@ -116,6 +116,9 @@ The lease is held under the secondmate id until explicit retirement or seed roll
 Teardown of a leased home fails closed if `treehouse return` cannot release the lease; plain-clone homes with no treehouse pool slot are removed directly.
 Secondmate routes cover `no-mistakes` and `direct-PR` projects; `local-only` projects remain main-firstmate work.
 For `no-mistakes` projects, seeding initializes only projects newly cloned into a secondmate home and refuses to mutate a preexisting clone that is not already initialized.
+When `config/projects-root` selects project-container mode, seeding instead validates every explicitly registered sibling repository and its origin, requires every repo in a `no-mistakes` project to be initialized already, inherits the container-base setting, and creates no project clone.
+An explicit home such as `<container>/.secondmate` is cloned as a real firstmate home beside those repos; it is never a symlink or a repo entry.
+Shared seeding and rollback never initialize, synchronize, delete, or otherwise mutate the external checkout.
 After creating a secondmate, move existing main-backlog queued items that you have judged in-scope with `fm-backlog-handoff.sh <secondmate-id> <item-key>...`; it is idempotent and refuses In flight, Done, or non-secondmate homes.
 Set `FM_SECONDMATE_CHARTER` to seed from inline charter text when no filled charter brief exists; set `FM_SECONDMATE_SCOPE` when the routing scope should differ from the charter text.
 Each seed writes an `.fm-secondmate-home` identity marker at the home root.
@@ -124,19 +127,68 @@ This does not relax protection for any other untracked file.
 An existing linked-worktree home that predates this rule advances through its marker-only state during its next bootstrap or spawn local sync, after which Git ignores the marker normally.
 A standalone-clone home cannot receive a primary-local commit through that no-fetch sync, so it receives the rule through `/updatefirstmate`'s origin refresh instead.
 
+Use `bin/fm-secondmate-fleet.sh status` to inspect every registered persistent coordinator. Use `bin/fm-secondmate-fleet.sh ensure` when you want every project-bearing coordinator live: it attaches to healthy coordinators, recovers only confidently dead ones, and fails closed for an unproven endpoint. Persistent homes do not count as primary in-flight work; each live coordinator guards and supervises its own workers from its own `FM_HOME`.
+
 ## FM_HOME
 
 `FM_HOME` selects the operational home for one firstmate instance.
-When it is unset, most scripts use the repo root as the home; when it is set, scripts still run from this repo's `bin/`, but `state/`, `data/`, `config/`, and `projects/` come from `$FM_HOME`.
+When it is unset, most scripts use the repo root as the home; when it is set, scripts still run from this repo's `bin/`, while `state/`, `data/`, and `config/` come from `$FM_HOME` and project access defaults to `$FM_HOME/projects`.
 `FM_ROOT_OVERRIDE` overrides the firstmate repo root used by scripts, including the primary checkout watched by the worktree-tangle guard.
 When `FM_HOME` is unset, it also behaves as the old whole-root override.
 `bin/fm-send.sh` is intentionally stricter than that general fallback: it requires `FM_HOME` to be set before resolving a target, so operator steers cannot silently resolve against the wrong home.
 `FM_STATE_OVERRIDE`, `FM_DATA_OVERRIDE`, `FM_PROJECTS_OVERRIDE`, and `FM_CONFIG_OVERRIDE` override individual operational directories for tests and specialized harness setup.
+
 For the herdr backend, `FM_HOME` also determines the workspace label used by the adapter.
 For the zellij backend, `FM_HOME` does not split containers, but it determines the readable home prefix embedded in visible tab titles; use `FM_ZELLIJ_SESSION` when a separate zellij session is needed.
 The full zellij home label also includes a short hash of the resolved `FM_ROOT` path.
 For the cmux backend, `FM_CONFIG_OVERRIDE` overrides where `config/cmux-socket-password` is read from, while `FM_HOME` determines the default config path and readable home prefix embedded in workspace titles.
 The full cmux home label also includes a short hash of the resolved `FM_ROOT` path, and there is no per-home container split.
+
+### Project containers (config/projects-root and data/projects.md)
+
+`config/projects-root` is optional, local, gitignored, and contains exactly one non-empty, non-comment absolute path to an existing project-container base.
+Project-base precedence is non-empty `FM_PROJECTS_OVERRIDE`, then `$FM_CONFIG_OVERRIDE/projects-root` or `$FM_HOME/config/projects-root`, then the legacy `$FM_HOME/projects` default.
+Either explicit source selects shared-container mode even when it resolves to `$FM_HOME/projects`; only genuine config absence with no override selects legacy-local mode.
+An invalid, unreadable, dangling, symlinked, or unresolvable config fails closed and never falls back to a mutation-capable legacy directory.
+
+Shared-container homes also require the local, gitignored `config/home-role` file.
+It contains exactly `primary` for the one home allowed to synchronize canonical repos, or exactly `secondmate` for a delegated home.
+Missing, unreadable, malformed, or unknown values refuse shared fleet synchronization rather than inferring a primary role from `.fm-secondmate-home`.
+`fm-home-seed.sh` writes `secondmate` transactionally for every seeded secondmate home.
+Before enabling `config/projects-root` on an existing primary home, deliberately create `config/home-role` with `printf 'primary\n' > config/home-role`; verify its owner and path first, and never copy that file into a secondmate home.
+Session-start bootstrap relays role authorization failures as `FLEET_SYNC:` diagnostics with a prompt to set `config/home-role` to exactly `primary` or `secondmate`, while continuing its other best-effort checks.
+
+When the config or override is present, every project line must use this form:
+
+```markdown
+- <project> [<mode> <optional +yolo>] - <description> (repos: <repo>[, <repo>...]; added <date>)
+```
+
+The project container is the same-named direct child `<projects-root>/<project>` and must be a real non-git directory.
+Every comma-separated repo name is an explicit direct, non-symlink child of that container and must be a Git worktree root.
+Repo order is preserved, duplicate repo names are invalid, and a bare project selector works only when exactly one repo is registered; use `<project>/<repo>` for a multi-repo container.
+The resolver never scans the configured base or a container to invent entries.
+Dot-prefixed names cannot be projects or repos, and `firstmate`, `workspaces`, `projects`, `state`, `data`, and `config` are reserved container names.
+These rules exclude Orca's task worktrees and the colocated `.secondmate` operational home by construction.
+
+For example, a primary home at `/Users/erickmanrique/orca/firstmate` can contain `/Users/erickmanrique/orca` in `config/projects-root` and register:
+
+```markdown
+- ayjestudios [no-mistakes] - Ayje Studios products (repos: frontend, backend, backoffice; added 2026-07-13)
+```
+
+That line resolves only `/Users/erickmanrique/orca/ayjestudios/frontend`, `/Users/erickmanrique/orca/ayjestudios/backend`, and `/Users/erickmanrique/orca/ayjestudios/backoffice`.
+`/Users/erickmanrique/orca/workspaces` remains reserved for Orca-managed task worktrees and is never canonical project input.
+`/Users/erickmanrique/orca/base-commerce` was observed on 2026-07-13 as a direct Git checkout, not a non-git container; this support change treats it only as a read-only migration example and does not move or rewrite it.
+
+Secondmate homes inherit `projects-root`, copy only their selected registry lines, retain a real empty internal `projects/` directory, and may live at `<container>/.secondmate` beside the registered repos.
+The primary firstmate role owns fleet-sync mutation of container repos; a `secondmate` role delegates shared synchronization and changes repos only through isolated task worktrees.
+From an Orca window opened at a registered container, repo, or repo subdirectory, `bin/fm-project-route.sh` maps the physical path back through `data/projects.md` and then reports the matching `data/secondmates.md` route and supported `fm-send` command.
+The helper refuses unregistered paths and ambiguous non-exclusive secondmate routes instead of guessing.
+
+When neither config nor override is present, the legacy line `- <name> [<mode>] - <description> (added <date>)` continues to map to the single repo `$FM_HOME/projects/<name>`.
+Legacy homes with no registry retain existing clone-directory discovery so session start can request that the registry be rebuilt.
+`bin/fm-projects-lib.sh` owns registry parsing, reserved-name checks, path validation, and selector resolution.
 
 ## Harness support
 
@@ -156,10 +208,32 @@ When the harness token is absent or `default`, secondmate launch falls back thro
 An explicit harness argument to `fm-spawn.sh` still overrides either config file for that spawn only.
 An explicit `--model` or `--effort` overrides the matching token from `config/secondmate-harness`; an explicit harness or raw launch command starts with clean model and effort defaults unless those flags are also passed.
 When `config/crew-dispatch.json` exists, crewmate and scout spawns require an explicit resolved harness instead of automatically falling back to `config/crew-harness`.
-The primary propagates `config/crew-dispatch.json`, `config/crew-harness`, and `config/backlog-backend` into secondmate homes at secondmate spawn, during the locked session-start bootstrap secondmate sweep, and during explicit `bin/fm-config-push.sh` runs, so a secondmate's own crewmates, dispatch profiles, and backlog backend use the primary values.
+The primary propagates `config/crew-dispatch.json`, `config/crew-harness`, `config/backlog-backend`, and `config/projects-root` into secondmate homes at seed or spawn, during the locked session-start bootstrap secondmate sweep, and during explicit `bin/fm-config-push.sh` runs.
 `config/secondmate-harness` is not inherited because secondmates do not launch secondmates.
 For grok, `fm-spawn.sh` installs one firstmate-owned global turn-end hook under `$GROK_HOME/hooks/`, or `~/.grok/hooks/` when `GROK_HOME` is unset, and drops a per-task `.fm-grok-turnend` pointer in the worktree, with teardown removing the task token and pointer.
 For Pi secondmate launches, `fm-spawn.sh` starts Pi with `-e` pointed at the secondmate home's own tracked `.pi/extensions/fm-primary-pi-watch.ts` and `.pi/extensions/fm-primary-turnend-guard.ts`, both already present from the secondmate home's git worktree.
+
+## Coordinator posture (bin/firstmate and secondmate launches)
+
+The recommended default posture for a coordinator agent - the primary firstmate and every secondmate - is Claude Fable 5 at medium effort.
+This section is the single owner of that default; the entry and spawn scripts implement it and point here.
+`bin/firstmate claude` appends `--model claude-fable-5 --effort medium` to both resume and fresh launches when the forwarded arguments contain neither `--model` nor `--effort`; passing either axis disables the whole injection, so an explicit override never gains a surprise companion flag.
+`bin/fm-spawn.sh --secondmate` applies the same pair to a templated claude secondmate launch that still has neither a model nor an effort after explicit `--model`/`--effort` flags and the optional `config/secondmate-harness` tokens; pinning either axis disables the default.
+The default is claude-only and pair-only: raw launch commands, codex, and every other harness launch exactly as before, so `firstmate codex` and `secondmate codex` remain fully supported explicit choices.
+Crewmate and scout dispatch is unaffected; its recommended profiles live in the crew dispatch policy above.
+
+## Delivery posture (rapid-local / peer-ship)
+
+Each meaningful ship task carries a durable delivery posture, decided by the captain at dispatch: `rapid-local` or `peer-ship`.
+This section is the single owner of the posture record and its mapping; `AGENTS.md` task lifecycle owns the coordinator procedure (ask the captain when the posture was not supplied), and the script headers own exact flags.
+`rapid-local` maps the task onto the existing guarded local-only delivery machinery whatever the project's registered mode is: an isolated task worktree, focused validation by the crewmate, a `done: ready in branch fm/<id>` stop, firstmate diff review, captain approval, and the fast-forward-only `bin/fm-merge-local.sh` merge into local `main` - no PR requirement.
+`peer-ship` keeps the project's registered remote mode (`no-mistakes` or `direct-PR`): an independent worktree, review and final validation, and the PR gate; it is refused for a `local-only` project, which has no remote path.
+Neither posture creates a direct-edit path into a canonical repository; both deliver through an isolated worktree and the existing guarded merge or PR machinery.
+`bin/fm-brief.sh` is the fail-closed gate: a ship brief cannot be scaffolded without `--delivery`, and the chosen value is written to `data/<task-id>/delivery`.
+`bin/fm-spawn.sh` reads that record for ship spawns, persists it as `delivery=` in `state/<task-id>.meta`, and maps the task's effective `mode=` (rapid-local forces `local-only`; peer-ship keeps the registered mode), so the posture survives restart and recovery and downstream tooling (`fm-review-diff.sh`, `fm-merge-local.sh`, `fm-teardown.sh`) branches on the already-verified `mode=` semantics.
+`bin/fm-promote.sh` requires the same `--delivery` flag when a scout is promoted to ship work, because promotion creates new meaningful ship work.
+A task record with no posture - a pre-policy task, or a deliberately hand-written brief - keeps legacy project-mode behavior unchanged; an unknown recorded value fails closed at spawn before any backend mutation.
+Scouts and secondmates have no delivery posture: a scout delivers a report and a secondmate is a coordinator, not a deliverable.
 
 ## Crew dispatch profiles (config/crew-dispatch.json)
 
@@ -196,6 +270,8 @@ An omitted model or effort means the selected harness uses its own default for t
 If a selected profile carries an effort value the chosen harness does not accept, `fm-spawn.sh` records the requested `effort=` in task meta for traceability but omits the launch flag, and bootstrap reports the invalid harness/effort pair as a `CREW_DISPATCH` diagnostic when it is visible in the file.
 `quota-balanced` selection is deterministic and implemented by `bin/fm-dispatch-select.sh`, whose header owns the general-window rules, the 20 point stale-clear freshness margin, vendor-availability handling, and the degrade-to-first-element fallbacks; quota trouble never blocks dispatch.
 See [`docs/examples/crew-dispatch.json`](examples/crew-dispatch.json) for a starting point to copy into local `config/crew-dispatch.json`.
+That example is also the documented recommended dispatch policy: implementation crewmates default to codex `gpt-5.6-terra` at medium effort, genuinely complex or risky implementation escalates to codex `gpt-5.6-sol` at high effort, and an independent architecture or review pass uses `claude-fable-5` high or `gpt-5.6-sol` high when a second opinion is materially warranted.
+Firstmate never writes or overwrites a captain's local `config/crew-dispatch.json` to match the example; the captain adopts or edits the recommended policy deliberately, and an existing local file that already expresses it needs no change.
 When the file exists, bootstrap validates it with `jq`.
 Valid files produce a `CREW_DISPATCH: active config/crew-dispatch.json` block that lists each rule and prints `default:` when present.
 Malformed JSON, an unverified harness, a malformed array profile, an unknown `select`, or an effort value unsupported by that harness is reported as `CREW_DISPATCH: invalid config/crew-dispatch.json - ...`; missing `jq` is reported through the normal `MISSING: jq` install-consent flow.
@@ -236,7 +312,7 @@ It emits `SECONDMATE_SYNC:` only when a home was skipped for an actionable sync 
 `NUDGE_SECONDMATES:` lists stable `fm-<id>` task selectors; the `bootstrap-diagnostics` skill owns the send procedure.
 The same bootstrap run also emits `SECONDMATE_LIVENESS:` for live secondmate endpoints: `already-live` and `respawned` are handled states, while `skipped` or `respawn failed` means the secondmate still needs attention.
 For a mid-session inherited config edit where tracked-file sync and reread nudges are not needed, run `bin/fm-config-push.sh`.
-It uses the same live secondmate discovery and propagation helper as bootstrap, prints each live home's `crew-dispatch.json`, `crew-harness`, and `backlog-backend` result as `pushed`, `unchanged`, `skipped`, or `error`, and exits non-zero only for real propagation errors.
+It uses the same live secondmate discovery and propagation helper as bootstrap, prints each live home's `crew-dispatch.json`, `crew-harness`, `backlog-backend`, and `projects-root` result as `pushed`, `unchanged`, `skipped`, or `error`, and exits non-zero only for real propagation errors.
 That live discovery starts from `state/*.meta` records with `kind=secondmate`; `data/secondmates.md` only backfills `home=` for older or incomplete meta records.
 Skipped items, such as a destination checkout that does not yet gitignore the item, are visible warnings but not hard failures.
 
@@ -319,7 +395,7 @@ FM_HOME=                 # optional operational home for most scripts, unset mea
 FM_ROOT_OVERRIDE=        # override firstmate repo root, tangle-guard target, and zellij/cmux home-title hash; also legacy whole-root override when FM_HOME is unset
 FM_STATE_OVERRIDE=       # alternate state dir, mainly for tests
 FM_DATA_OVERRIDE=        # alternate data dir, mainly for tests
-FM_PROJECTS_OVERRIDE=    # alternate projects dir, mainly for tests
+FM_PROJECTS_OVERRIDE=    # highest-precedence project catalog override, mainly for tests and one-shot setup
 FM_CONFIG_OVERRIDE=      # alternate config dir, mainly for tests
 FM_BACKEND=             # optional runtime backend override for new spawns; tmux/herdr/zellij/orca/cmux support ship/scout spawns, codex-app is not accepted
 HERDR_SESSION=default  # herdr-only: named session for normal backend ops; not enough for destructive cleanup (docs/herdr-backend.md)

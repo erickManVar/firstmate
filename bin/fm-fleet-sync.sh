@@ -19,20 +19,18 @@
 # killed mid-write - e.g. a timed-out bootstrap sync or a teardown process kill),
 # it is retried with a bounded wait and removed only when provably stale; see
 # fetch_with_packed_refs_lock_guard and the FM_FLEET_SYNC_PACKED_REFS_LOCK_* knobs.
-# Usage: fm-fleet-sync.sh [<project-dir-or-name>]
+# Usage: fm-fleet-sync.sh [<project-dir-or-selector>]
 # The single-project form accepts either a path (absolute, or relative to the
-# caller's cwd) or a bare "<name>"/"projects/<name>" form, resolved against
-# this home's projects dir ($FM_HOME/projects, or $FM_PROJECTS_OVERRIDE).
-# Bare names and "projects/<name>" forms prefer this home's projects dir before
-# falling back to an explicit path. Example: from anywhere,
-# `fm-fleet-sync.sh dotfiles-private` syncs just that one clone, same as
-# passing its full projects/dotfiles-private path.
+# caller's cwd), a bare single-repo project name, or `<project>/<repo>` for a
+# multi-repo container, resolved through bin/fm-projects-lib.sh.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
-PROJECTS="${FM_PROJECTS_OVERRIDE:-$FM_HOME/projects}"
+# shellcheck source=bin/fm-projects-lib.sh
+. "$SCRIPT_DIR/fm-projects-lib.sh"
+PROJECTS=$(fm_projects_root) || exit 1
 # shellcheck source=bin/fm-lock-lib.sh
 . "$SCRIPT_DIR/fm-lock-lib.sh"
 FM_LOCK_LOG_PREFIX=fleet-sync
@@ -64,7 +62,22 @@ if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
 fi
 [ $# -le 1 ] || { usage; exit 1; }
 
+if [ "$(fm_projects_mode)" = shared-external ]; then
+  if ! HOME_ROLE=$(fm_projects_home_role); then
+    echo "fleet: error: shared synchronization authorization failed; set $(fm_projects_config_dir)/home-role to exactly primary, or exactly secondmate for a seeded secondmate home" >&2
+    exit 1
+  fi
+  if [ "$HOME_ROLE" = secondmate ]; then
+    echo "fleet: skipped: shared project synchronization delegated to primary firstmate"
+    exit 0
+  fi
+fi
+
 project_label() {
+  if [ -d "$PROJ" ]; then
+    basename "$PROJ"
+    return
+  fi
   case "$PROJ" in
     "$PROJECTS"/*) basename "$PROJ" ;;
     projects/*) basename "$PROJ" ;;
@@ -78,32 +91,11 @@ project_label() {
 # sync_project's existing "not a directory" skip.
 resolve_project_arg() {
   local arg=$1 candidate
-  case "$arg" in
-    projects/*)
-      candidate="$PROJECTS/${arg#projects/}"
-      if [ -d "$candidate" ]; then
-        printf '%s\n' "$candidate"
-        return 0
-      fi
-      ;;
-    */*)
-      if [ -d "$arg" ]; then
-        printf '%s\n' "$arg"
-        return 0
-      fi
-      ;;
-    *)
-      candidate="$PROJECTS/$arg"
-      if [ -d "$candidate" ]; then
-        printf '%s\n' "$candidate"
-        return 0
-      fi
-      if [ -d "$arg" ]; then
-        printf '%s\n' "$arg"
-        return 0
-      fi
-      ;;
-  esac
+  candidate=$(fm_project_resolve_arg "$arg") || return 1
+  if [ -d "$candidate" ]; then
+    printf '%s\n' "$candidate"
+    return 0
+  fi
   printf '%s\n' "$arg"
 }
 
@@ -301,7 +293,7 @@ sync_project() {
     echo "$label: skipped: not a git repo"
     return 0
   fi
-  mode_line=$("$FM_ROOT/bin/fm-project-mode.sh" "$label" 2>/dev/null || echo "no-mistakes off")
+  mode_line=$("$FM_ROOT/bin/fm-project-mode.sh" "$PROJ" 2>/dev/null || echo "no-mistakes off")
   mode=${mode_line%% *}
   if [ "$mode" = "local-only" ]; then
     echo "$label: skipped: local-only project"
@@ -418,13 +410,24 @@ sync_project() {
 }
 
 if [ $# -eq 1 ]; then
-  sync_project "$(resolve_project_arg "$1")"
+  if ! resolved_project=$(resolve_project_arg "$1"); then
+    exit 1
+  fi
+  sync_project "$resolved_project"
   exit 0
 fi
 
-[ -d "$PROJECTS" ] || exit 0
-for proj in "$PROJECTS"/*; do
-  [ -e "$proj" ] || continue
-  [ -d "$proj" ] || continue
-  sync_project "$proj"
-done
+names=$(fm_project_registry_names) || exit 1
+while IFS= read -r name; do
+  [ -n "$name" ] || continue
+  repos=$(fm_project_repo_paths "$name") || exit 1
+  while IFS= read -r proj; do
+    [ -n "$proj" ] || continue
+    [ -d "$proj" ] || continue
+    sync_project "$proj"
+  done <<EOF
+$repos
+EOF
+done <<EOF
+$names
+EOF

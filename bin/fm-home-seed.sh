@@ -7,9 +7,13 @@
 #       a fresh firstmate worktree via "treehouse get --lease", which durably
 #       leases the worktree under the secondmate <id> so the home survives with
 #       no live process and is never recycled until the lease is released with
-#       "treehouse return". Projects are cloned
-#       from the active home into the secondmate home's projects/ directory.
-#       That project list is non-exclusive provisioning data. Pass --no-projects
+#       "treehouse return". With the legacy local catalog, projects are cloned
+#       into the secondmate home's projects/ directory. With config/projects-root,
+#       every explicitly registered repo in each non-git project container is
+#       validated and referenced without clone, initialization, synchronization,
+#       or rollback ownership. The home may be the container's real sibling
+#       `.secondmate/` directory. That project list is non-exclusive access data.
+#       Pass --no-projects
 #       instead of a project list to seed a project-less home for a domain whose
 #       subject is the firstmate repo itself; it is mutually exclusive with a
 #       project list, and omitting both still fails loudly. A project-less seed
@@ -29,23 +33,38 @@
 #   fm-home-seed.sh validate
 #       Refuse duplicate ids, duplicate homes, and nested or overlapping homes in
 #       data/secondmates.md.
+#   fm-home-seed.sh routes
+#       Validate the registry, then print one machine-readable route per line as
+#       <id><TAB><absolute-home><TAB><comma-separated-projects>. This is the
+#       read-only registry interface for fleet-level coordinator operations.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
-PROJECTS="${FM_PROJECTS_OVERRIDE:-$FM_HOME/projects}"
+CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
+# shellcheck source=bin/fm-projects-lib.sh
+. "$SCRIPT_DIR/fm-projects-lib.sh"
+# shellcheck source=bin/fm-config-inherit-lib.sh
+. "$SCRIPT_DIR/fm-config-inherit-lib.sh"
+PROJECTS=$(fm_projects_root) || exit 1
+PROJECTS_MODE=$(fm_projects_mode) || exit 1
 REG="$DATA/secondmates.md"
 SUB_HOME_MARKER=".fm-secondmate-home"
 
 usage() {
   echo "usage: fm-home-seed.sh <id> <home|-> {<project>...|--no-projects}" >&2
   echo "       fm-home-seed.sh validate" >&2
+  echo "       fm-home-seed.sh routes" >&2
 }
 
 registry_home_for_line() {
   sed -n 's/^[^(]*(home: \([^;)]*\);.*/\1/p'
+}
+
+registry_projects_for_line() {
+  sed -n 's/.*; projects: \([^;)]*\); added .*/\1/p'
 }
 
 normalize_registry_text() {
@@ -297,6 +316,24 @@ validate_registry() {
   return 0
 }
 
+print_routes() {
+  local line id home projects
+  validate_registry || return 1
+  [ -f "$REG" ] || return 0
+  while IFS= read -r line; do
+    case "$line" in
+      "- "*)
+        id=${line#- }
+        id=${id%% *}
+        home=$(printf '%s\n' "$line" | registry_home_for_line)
+        projects=$(printf '%s\n' "$line" | registry_projects_for_line)
+        [ -n "$id" ] && [ -n "$home" ] || continue
+        printf '%s\t%s\t%s\n' "$id" "$home" "$projects"
+        ;;
+    esac
+  done < "$REG"
+}
+
 join_projects() {
   local out="" project
   for project in "$@"; do
@@ -346,6 +383,92 @@ refuse_active_home_path() {
     echo "error: secondmate home cannot be an ancestor of the firstmate repo: $home" >&2
     return 1
   fi
+}
+
+refuse_shared_home_inside_registered_repo() {
+  local home=$1 project repo repos repo_paths
+  [ "$PROJECTS_MODE" = shared-external ] || return 0
+  repos=$(fm_project_registry_names) || return 1
+  while IFS= read -r project; do
+    [ -n "$project" ] || continue
+    repo_paths=$(fm_project_repo_paths "$project") || return 1
+    while IFS= read -r repo; do
+      [ -n "$repo" ] || continue
+      if [ "$home" = "$repo" ] || path_is_ancestor_of "$repo" "$home"; then
+        echo "error: secondmate home cannot be inside registered canonical repo $repo: $home" >&2
+        return 1
+      fi
+    done <<EOF
+$repo_paths
+EOF
+  done <<EOF
+$repos
+EOF
+}
+
+existing_ancestor_for_path() {
+  local path=$1
+  while [ ! -e "$path" ] && [ "$path" != "/" ]; do
+    path=$(dirname "$path")
+  done
+  [ -d "$path" ] || path=$(dirname "$path")
+  printf '%s\n' "$path"
+}
+
+shared_home_is_registered_marker_match() {
+  local id=$1 home=$2 marker_id target line registered_id registered_home projects project expected_home old_ifs
+  [ -f "$home/$SUB_HOME_MARKER" ] || return 1
+  marker_id=$(cat "$home/$SUB_HOME_MARKER" 2>/dev/null || true)
+  [ "$marker_id" = "$id" ] || return 1
+  [ -f "$REG" ] || return 1
+  target=$(resolved_path "$home")
+  while IFS= read -r line; do
+    case "$line" in
+      "- "*)
+        registered_id=${line#- }
+        registered_id=${registered_id%% *}
+        [ "$registered_id" = "$id" ] || continue
+        registered_home=$(printf '%s\n' "$line" | registry_home_for_line)
+        [ -n "$registered_home" ] || return 1
+        [ "$(resolved_path "$registered_home")" = "$target" ] || return 1
+        projects=$(printf '%s\n' "$line" | registry_projects_for_line)
+        [ -n "$projects" ] || return 1
+        old_ifs=$IFS
+        IFS=,
+        for project in $projects; do
+          project=$(printf '%s' "$project" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+          [ -n "$project" ] || continue
+          fm_project_is_registered "$project" || continue
+          expected_home="$(fm_project_container_path "$project")/.secondmate"
+          [ "$(resolved_path "$expected_home")" = "$target" ] && {
+            IFS=$old_ifs
+            return 0
+          }
+        done
+        IFS=$old_ifs
+        return 1
+        ;;
+    esac
+  done < "$REG"
+  return 1
+}
+
+refuse_shared_home_in_reserved_or_git_worktree() {
+  local id=$1 home=$2 workspaces ancestor top
+  [ "$PROJECTS_MODE" = shared-external ] || return 0
+  workspaces=$(resolved_path "$PROJECTS/workspaces")
+  if [ "$home" = "$workspaces" ] || path_is_ancestor_of "$workspaces" "$home"; then
+    echo "error: secondmate home cannot be inside reserved Orca workspaces subtree $workspaces: $home" >&2
+    return 1
+  fi
+  ancestor=$(existing_ancestor_for_path "$home")
+  top=$(git -C "$ancestor" rev-parse --show-toplevel 2>/dev/null || true)
+  [ -z "$top" ] || {
+    shared_home_is_registered_marker_match "$id" "$home" && return 0
+    top=$(resolved_path "$top")
+    echo "error: secondmate home cannot be inside existing git worktree $top: $home" >&2
+    return 1
+  }
 }
 
 validate_operational_dir() {
@@ -535,7 +658,7 @@ EOF
 
 clone_project() {
   local project=$1 home=$2 src dst url dst_url mode
-  src="$PROJECTS/$project"
+  src=$(fm_project_path "$project") || return 1
   dst=$(validate_project_destination "$home" "$project") || return 1
   [ -d "$src" ] || { echo "error: project $project not found at $src" >&2; return 1; }
   git -C "$src" rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "error: project $project is not a git repo" >&2; return 1; }
@@ -562,10 +685,11 @@ EOF
 }
 
 validate_seed_project() {
-  local project=$1 src mode url
-  src="$PROJECTS/$project"
-  [ -d "$src" ] || { echo "error: project $project not found at $src" >&2; return 1; }
-  git -C "$src" rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "error: project $project is not a git repo" >&2; return 1; }
+  local project=$1 src mode url repos
+  fm_project_name_valid "$project" || {
+    echo "error: unsafe project name: $project" >&2
+    return 1
+  }
   read -r mode _ <<EOF
 $(FM_HOME="$FM_HOME" FM_DATA_OVERRIDE="$DATA" "$FM_ROOT/bin/fm-project-mode.sh" "$project")
 EOF
@@ -573,8 +697,29 @@ EOF
     echo "error: project $project is local-only; secondmate routes support only no-mistakes and direct-PR projects" >&2
     return 1
   fi
-  url=$(git -C "$src" remote get-url origin 2>/dev/null || true)
-  [ -n "$url" ] || { echo "error: project $project is $mode but has no origin remote" >&2; return 1; }
+  repos=$(fm_project_repo_paths "$project") || return 1
+  while IFS= read -r src; do
+    [ -n "$src" ] || continue
+    [ -d "$src" ] || { echo "error: project $project repo not found at $src" >&2; return 1; }
+    git -C "$src" rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "error: project $project repo is not a git repo: $src" >&2; return 1; }
+    url=$(git -C "$src" remote get-url origin 2>/dev/null || true)
+    if [ -z "$url" ]; then
+      if [ "$PROJECTS_MODE" = legacy-local ]; then
+        echo "error: project $project is $mode but has no origin remote" >&2
+      else
+        echo "error: project $project repo $src is $mode but has no origin remote" >&2
+      fi
+      return 1
+    fi
+    if [ "$PROJECTS_MODE" = shared-external ] && [ "$mode" = no-mistakes ]; then
+      git -C "$src" remote get-url no-mistakes >/dev/null 2>&1 || {
+        echo "error: shared project $project repo $src is not initialized for no-mistakes; refusing to mutate the external checkout" >&2
+        return 1
+      }
+    fi
+  done <<EOF
+$repos
+EOF
 }
 
 SEED_ROLLBACK_ACTIVE=0
@@ -592,6 +737,7 @@ SEED_PARENT_BRIEF_DIR_CREATED=0
 SEED_SUB_REG_EXISTED=0
 SEED_CHARTER_EXISTED=0
 SEED_MARKER_EXISTED=0
+SEED_PROJECTS_ROOT_EXISTED=0
 
 restore_seed_file() {
   local existed=$1 backup=$2 path=$3
@@ -711,8 +857,10 @@ seed_rollback() {
       fi
       if [ -n "${SEED_BACKUP_DIR:-}" ] && [ "${SEED_HOME_BACKED_UP:-0}" = 1 ]; then
         restore_seed_file "$SEED_MARKER_EXISTED" "$SEED_BACKUP_DIR/marker" "$SEED_HOME/$SUB_HOME_MARKER"
+        restore_seed_file "$SEED_HOME_ROLE_EXISTED" "$SEED_BACKUP_DIR/home-role" "$SEED_HOME/config/home-role"
         restore_seed_file "$SEED_CHARTER_EXISTED" "$SEED_BACKUP_DIR/charter.md" "$SEED_HOME/data/charter.md"
         restore_seed_file "$SEED_SUB_REG_EXISTED" "$SEED_BACKUP_DIR/sub-projects.md" "$SEED_HOME/data/projects.md"
+        restore_seed_file "$SEED_PROJECTS_ROOT_EXISTED" "$SEED_BACKUP_DIR/projects-root" "$SEED_HOME/config/projects-root"
       fi
     fi
   fi
@@ -848,10 +996,11 @@ refuse_populated_projectless_home() {
 }
 
 refuse_projectful_projectless_charter() {
-  local id=$1 brief=$2 project_clones
-  project_clones=$(brief_section_text "$brief" "Project clones")
-  if printf '%s\n' "$project_clones" | grep -F 'None. This is a project-less domain' >/dev/null 2>&1 \
-    && ! printf '%s\n' "$project_clones" | grep -Eq '^[[:space:]]*-[[:space:]]+'; then
+  local id=$1 brief=$2 project_access
+  project_access=$(brief_section_text "$brief" "Project access")
+  [ -n "$project_access" ] || project_access=$(brief_section_text "$brief" "Project clones")
+  if printf '%s\n' "$project_access" | grep -F 'None. This is a project-less domain' >/dev/null 2>&1 \
+    && ! printf '%s\n' "$project_access" | grep -Eq '^[[:space:]]*-[[:space:]]+'; then
     return 0
   fi
   printf 'error: cannot seed project-less secondmate home because existing charter brief at %s conflicts with --no-projects\n' "$brief" >&2
@@ -861,6 +1010,7 @@ refuse_projectful_projectless_charter() {
 
 seed_home() {
   local id=$1 requested_home=$2 requested_abs home projects_csv project project_dst charter_summary charter_scope
+  local inherited_projects expected_projects
   local no_projects=0 arg
   local filtered=()
   shift 2
@@ -885,9 +1035,21 @@ seed_home() {
   fi
 
   validate_registry
+  if [ "$PROJECTS_MODE" = shared-external ]; then
+    [ "$(fm_projects_home_role)" = primary ] || {
+      echo "error: shared secondmate seeding requires the active home role to be primary" >&2
+      return 1
+    }
+  fi
   for project in "$@"; do
     validate_seed_project "$project"
   done
+  if [ "$requested_home" != "-" ]; then
+    requested_abs=$(abs_path_for_new "$requested_home")
+    refuse_active_home_path "$requested_abs" || return 1
+    refuse_shared_home_inside_registered_repo "$requested_abs" || return 1
+    refuse_shared_home_in_reserved_or_git_worktree "$id" "$requested_abs" || return 1
+  fi
 
   SEED_ROLLBACK_ACTIVE=1
   SEED_COMMITTED=0
@@ -906,6 +1068,8 @@ seed_home() {
   SEED_SUB_REG_EXISTED=0
   SEED_CHARTER_EXISTED=0
   SEED_MARKER_EXISTED=0
+  SEED_HOME_ROLE_EXISTED=0
+  SEED_PROJECTS_ROOT_EXISTED=0
   trap seed_rollback EXIT
   if [ -f "$REG" ]; then
     SEED_PARENT_REG_EXISTED=1
@@ -918,8 +1082,6 @@ seed_home() {
     SEED_HOME="$home"
     home=$(verify_firstmate_home "$home")
   else
-    requested_abs=$(abs_path_for_new "$requested_home")
-    refuse_active_home_path "$requested_abs" || return 1
     validate_home_assignment "$id" "$requested_abs" || return 1
     SEED_HOME="$requested_abs"
     [ -e "$requested_abs" ] || SEED_HOME_CREATED=1
@@ -949,7 +1111,53 @@ seed_home() {
     SEED_MARKER_EXISTED=1
     cp "$home/$SUB_HOME_MARKER" "$SEED_BACKUP_DIR/marker"
   fi
+  if [ -L "$home/config/home-role" ]; then
+    echo "error: secondmate home role config must not be a symlink: $home/config/home-role" >&2
+    return 1
+  fi
+  if [ -e "$home/config/home-role" ] && [ ! -f "$home/config/home-role" ]; then
+    echo "error: secondmate home role config must be a regular file: $home/config/home-role" >&2
+    return 1
+  fi
+  if [ -f "$home/config/home-role" ]; then
+    SEED_HOME_ROLE_EXISTED=1
+    cp "$home/config/home-role" "$SEED_BACKUP_DIR/home-role"
+  fi
+  if [ -L "$home/config/projects-root" ]; then
+    echo "error: secondmate projects-root config must not be a symlink: $home/config/projects-root" >&2
+    return 1
+  fi
+  if [ -e "$home/config/projects-root" ] && [ ! -f "$home/config/projects-root" ]; then
+    echo "error: secondmate projects-root config must be a regular file: $home/config/projects-root" >&2
+    return 1
+  fi
+  if [ -f "$home/config/projects-root" ]; then
+    SEED_PROJECTS_ROOT_EXISTED=1
+    cp "$home/config/projects-root" "$SEED_BACKUP_DIR/projects-root"
+  fi
   SEED_HOME_BACKED_UP=1
+
+  if [ "$PROJECTS_MODE" = shared-external ] && [ ! -f "$CONFIG/projects-root" ]; then
+    echo "error: shared secondmate seeding requires a durable config/projects-root; FM_PROJECTS_OVERRIDE alone is not inherited" >&2
+    return 1
+  fi
+  FM_INHERITABLE_CONFIG=projects-root \
+    propagate_inheritable_config "$CONFIG" "$home/config" || {
+      echo "error: failed to inherit projects-root into secondmate home $home" >&2
+      return 1
+    }
+  if [ "$PROJECTS_MODE" = shared-external ]; then
+    inherited_projects=$(FM_HOME="$home" FM_CONFIG_OVERRIDE='' FM_PROJECTS_OVERRIDE='' fm_projects_root) || {
+      echo "error: secondmate home $home cannot resolve its inherited projects-root" >&2
+      return 1
+    }
+    expected_projects=$(fm_projects_normalize_path "$PROJECTS") || return 1
+    inherited_projects=$(fm_projects_normalize_path "$inherited_projects") || return 1
+    [ "$inherited_projects" = "$expected_projects" ] || {
+      echo "error: secondmate home $home did not inherit the primary projects-root" >&2
+      return 1
+    }
+  fi
 
   if [ ! -f "$SEED_PARENT_BRIEF" ]; then
     [ -n "${FM_SECONDMATE_CHARTER:-}" ] || {
@@ -979,24 +1187,29 @@ seed_home() {
     return 1
   }
 
-  for project in "$@"; do
-    project_dst=$(validate_project_destination "$home" "$project") || return 1
-    [ -e "$project_dst" ] || printf '%s\n' "$project_dst" >> "$SEED_CREATED_PROJECTS_FILE"
-    clone_project "$project" "$home"
-  done
+  if [ "$PROJECTS_MODE" = legacy-local ]; then
+    for project in "$@"; do
+      project_dst=$(validate_project_destination "$home" "$project") || return 1
+      [ -e "$project_dst" ] || printf '%s\n' "$project_dst" >> "$SEED_CREATED_PROJECTS_FILE"
+      clone_project "$project" "$home"
+    done
+  fi
   sync_project_registry "$home" "$@"
-  for project in "$@"; do
-    project_dst=$(validate_project_destination "$home" "$project") || return 1
-    if seed_project_was_created "$project_dst"; then
-      initialize_no_mistakes_project "$home" "$project" 1
-    else
-      initialize_no_mistakes_project "$home" "$project" 0
-    fi
-  done
+  if [ "$PROJECTS_MODE" = legacy-local ]; then
+    for project in "$@"; do
+      project_dst=$(validate_project_destination "$home" "$project") || return 1
+      if seed_project_was_created "$project_dst"; then
+        initialize_no_mistakes_project "$home" "$project" 1
+      else
+        initialize_no_mistakes_project "$home" "$project" 0
+      fi
+    done
+  fi
 
   cp "$SEED_PARENT_BRIEF" "$home/data/charter.md"
 
   projects_csv=$(join_projects "$@")
+  printf '%s\n' secondmate > "$home/config/home-role"
   printf '%s\n' "$id" > "$home/$SUB_HOME_MARKER"
   write_registry "$id" "$home" "$projects_csv" "$SEED_PARENT_BRIEF"
   validate_registry
@@ -1010,6 +1223,10 @@ case "${1:-}" in
   validate)
     [ $# -eq 1 ] || { usage; exit 1; }
     validate_registry
+    ;;
+  routes)
+    [ $# -eq 1 ] || { usage; exit 1; }
+    print_routes
     ;;
   -h|--help|'')
     usage

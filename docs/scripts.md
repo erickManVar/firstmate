@@ -8,6 +8,12 @@ The shared no-mistakes gate refusal used by `fm-spawn.sh`, `fm-send.sh`, and `fm
 | Script                   | Purpose                                                                              |
 | ------------------------ | ------------------------------------------------------------------------------------ |
 | `fm-session-start.sh`    | Compose lock, bootstrap, and wake drain into the single ordered session-start digest |
+| `firstmate`              | Ergonomic primary-session entry alias for `fm-primary-entry.sh`                      |
+| `fm-primary-entry.sh`    | Captain entry command (`firstmate <claude\|codex>`): anchor to the repo root, resume or start the primary session (docs/primary-entry.md) |
+| `secondmate`             | Ergonomic project-secondmate launcher alias for `fm-secondmate.sh`                   |
+| `fm-secondmate.sh`       | Route a project to its persistent coordinator, attach if live, or safely recover a confirmed-dead endpoint (docs/project-secondmate.md) |
+| `fm-secondmate-fleet.sh` | Read fleet-level secondmate status or idempotently ensure project coordinators without creating worker worktrees (docs/project-secondmate.md) |
+| `fm-session-recap.sh`    | SessionStart hook helper: source-aware bounded fleet recap context for fresh, cleared, resumed, or compacted primary sessions |
 | `fm-bootstrap.sh`        | Detect toolchain and fleet problems, run the locked session-start sweeps, and install approved tools |
 | `fm-fleet-sync.sh`       | Refresh project clones with safe fast-forwards, self-heals, `STUCK:` reports, branch pruning, and bounded recovery from an orphaned `.git/packed-refs.lock` |
 | `fm-fleet-snapshot.sh`   | Print the read-only structured fleet snapshot JSON (schema `fm-fleet-snapshot.v1`)   |
@@ -25,7 +31,7 @@ The shared no-mistakes gate refusal used by `fm-spawn.sh`, `fm-send.sh`, and `fm
 | `fm-arm-command-policy.mjs` | Semantic owner of the watcher-arm PreToolUse policy (docs/arm-pretool-check.md)   |
 | `fm-supervision-instructions.sh` | Render the session-start primary-harness supervision block or the one-line repair instruction |
 | `fm-home-seed.sh`        | Transactionally provision a secondmate home and maintain `data/secondmates.md`       |
-| `fm-spawn.sh`            | Spawn crewmates, scouts, `id=repo` batches, and secondmates on the resolved harness and runtime backend |
+| `fm-spawn.sh`            | Spawn crewmates, scouts, selector-based batches, and secondmates on the resolved harness and runtime backend |
 | `fm-dispatch-select.sh`  | Resolve a matched crew-dispatch rule to one concrete profile, owning `quota-balanced` selection |
 | `fm-backend.sh`          | Runtime-backend selection, meta helpers, selector resolution, and operation dispatch |
 | `fm-backend-hometag-lib.sh` | Shared per-installation home-tag derivation for zellij tab and cmux workspace titles |
@@ -36,6 +42,8 @@ The shared no-mistakes gate refusal used by `fm-spawn.sh`, `fm-send.sh`, and `fm
 | `backends/orca.sh`       | Experimental Orca backend adapter owning both worktree and terminal                  |
 | `backends/cmux.sh`       | Experimental cmux session-provider adapter                                           |
 | `fm-config-push.sh`      | Push declared inheritable local config to live secondmate homes mid-session          |
+| `fm-project-init.sh`     | Guardedly register a shared project container and seed its persistent project secondmate (docs/project-secondmate.md) |
+| `fm-project-route.sh`    | Resolve a project to registered secondmate routes without reading private chats       |
 | `fm-project-mode.sh`     | Resolve a project's delivery mode and `+yolo` flag from `data/projects.md`           |
 | `fm-merge-local.sh`      | Fast-forward a `local-only` project's local default branch after approval            |
 | `fm-review-diff.sh`      | Review a crewmate branch or recorded PR head against the authoritative base          |
@@ -54,6 +62,7 @@ The shared no-mistakes gate refusal used by `fm-spawn.sh`, `fm-send.sh`, and `fm
 | `fm-ff-lib.sh`           | Shared guarded fast-forward helper for origin pulls and local secondmate syncs       |
 | `fm-lock-lib.sh`         | Shared "is this git lock provably abandoned?" proof used by teardown and fleet-sync   |
 | `fm-config-inherit-lib.sh` | Shared primary-to-secondmate inheritable-config propagation                        |
+| `fm-projects-lib.sh`     | Resolve legacy repos or registry-driven project containers and sibling repos          |
 | `fm-tasks-axi-lib.sh`    | Shared backlog-backend selector and `tasks-axi` compatibility probe                  |
 | `fm-wake-drain.sh`       | Atomically drain queued watcher wakes, then assert watcher liveness                  |
 | `fm-wake-lib.sh`         | Shared durable wake queue, portable locks, and watcher identity/health helpers       |

@@ -92,6 +92,26 @@ bump_primary() {
 
 head_of() { git -C "$1" rev-parse HEAD; }
 
+# add_separate_clone <w> <id>: a secondmate home that is a GENUINELY SEPARATE
+# clone of the primary - its own .git and object store, NOT a shared-object
+# linked worktree - taken at the primary's current HEAD. A later bump_primary
+# then leaves it missing that commit, exactly the standalone-clone case where the
+# primary carries a local-only commit the clone's object store lacks. Its origin
+# is repointed at a nonexistent path so any convergence proves the missing commit
+# was acquired from the trusted local primary (FM_ROOT), never from origin or the
+# network. Adds the seed marker and a LIVE kind=secondmate meta.
+add_separate_clone() {
+  local w=$1 id=$2
+  git clone -q --no-hardlinks "$w/main" "$w/$id"
+  git -C "$w/$id" remote set-url origin "$w/nonexistent-origin.git"
+  printf '%s\n' "$id" > "$w/$id/.fm-secondmate-home"
+  {
+    printf 'window=firstmate:fm-%s\n' "$id"
+    printf 'kind=secondmate\n'
+    printf 'home=%s/%s\n' "$w" "$id"
+  } > "$w/home/state/$id.meta"
+}
+
 # ignore_marker_commit <w>: land THE FIX in the primary - add the seed marker to
 # the tracked .gitignore and commit it on main. The marker (.fm-secondmate-home)
 # is firstmate-generic, written by bin/fm-home-seed.sh into every seeded home; once
@@ -231,10 +251,12 @@ test_ff_inflight_feature_branch() {
   pass "T5 in-flight: a home on a feature branch is skipped, its work preserved"
 }
 
-# --- T6: no origin fetch happens in the local-HEAD sync path -----------------
-# A bare `git fetch` would need the network; the sync must never reach for it.
-# Shadow git with a wrapper that records any `fetch` invocation, then drive the
-# updated path and confirm the wrapper saw none.
+# --- T6: a home that already holds the commit fetches nothing -----------------
+# When the target already has the primary's commit (a linked worktree always
+# does), the local-HEAD sync fast-forwards with no fetch of any kind - not the
+# network origin fetch, and not the local primary acquisition. Shadow git with a
+# wrapper that records any `fetch` invocation, then drive the updated path and
+# confirm the wrapper saw none.
 test_no_fetch_in_local_path() {
   local w c1 base fakebin log real_git
   w=$(new_world ff-nofetch)
@@ -654,6 +676,115 @@ test_repo_gitignores_seed_marker() {
   pass "T15 the firstmate repo gitignores the secondmate seed marker"
 }
 
+# --- T16: a separate clone missing the commit converges via the local primary --
+# The reported bug: a standalone-clone home whose object store lacks the primary's
+# local-only commit used to skip forever with "<commit> does not exist". Now the
+# commit is acquired from the trusted local primary (FM_ROOT) over the filesystem
+# and the home fast-forwards. The clone's origin is broken, so convergence proves
+# the commit came from FM_ROOT and never from origin/network.
+test_separate_clone_converges_via_local_primary() {
+  local w base
+  w=$(new_world sep-converge)
+  add_separate_clone "$w" sm            # separate clone at c1, own object store
+  bump_primary "$w" instr              # primary advances; the clone lacks c2
+  base=$(primary_head_commit "$w/main")
+  git -C "$w/sm" rev-parse --verify --quiet "$base^{commit}" >/dev/null 2>&1 \
+    && fail "precondition: the separate clone must NOT already hold the primary commit"
+
+  FM_ROOT="$w/main" FM_HOME="$w/home" run_ff "$w/sm" "$base"
+
+  [ "$FF_STATUS" = updated ] || fail "FF_STATUS: expected updated, got '$FF_STATUS': $FF_OUT"
+  [ "$(head_of "$w/sm")" = "$base" ] \
+    || fail "separate clone did not fast-forward to the primary's local commit"
+  assert_contains "$FF_INSTR" "AGENTS.md" "instruction change is recorded after acquisition"
+  pass "T16 separate clone: a home missing the commit acquires it from the local primary and fast-forwards"
+}
+
+# --- T17: no acquisition source, no convergence (skip, work untouched) ---------
+# Without a trusted local primary (FM_ROOT unset), a separate clone missing the
+# commit must NOT invent a source - it skips exactly as before, proving the
+# acquisition only ever reaches the trusted local primary.
+test_separate_clone_skipped_without_primary() {
+  local w base before
+  w=$(new_world sep-noprimary)
+  add_separate_clone "$w" sm
+  bump_primary "$w" instr
+  base=$(primary_head_commit "$w/main")
+  before=$(head_of "$w/sm")
+
+  FM_ROOT="" FM_HOME="$w/home" run_ff "$w/sm" "$base"
+
+  [ "$FF_STATUS" = skipped ] || fail "FF_STATUS: expected skipped, got '$FF_STATUS': $FF_OUT"
+  assert_contains "$FF_OUT" "does not exist" "a home with no acquisition source is skipped"
+  [ "$(head_of "$w/sm")" = "$before" ] || fail "skipped home HEAD moved"
+  pass "T17 separate clone: without a trusted local primary the missing commit stays a skip"
+}
+
+# --- T18: a dirty separate clone is skipped even though the commit is acquired --
+# Acquisition populates the object store but must not bulldoze the ff-only guards:
+# a dirty separate clone still refuses the fast-forward and preserves its edit.
+test_separate_clone_dirty_skipped() {
+  local w base before
+  w=$(new_world sep-dirty)
+  add_separate_clone "$w" sm
+  bump_primary "$w" instr
+  base=$(primary_head_commit "$w/main")
+  printf 'uncommitted local edit\n' >> "$w/sm/AGENTS.md"
+  before=$(head_of "$w/sm")
+
+  FM_ROOT="$w/main" FM_HOME="$w/home" run_ff "$w/sm" "$base"
+
+  [ "$FF_STATUS" = skipped ] || fail "FF_STATUS: expected skipped, got '$FF_STATUS': $FF_OUT"
+  assert_contains "$FF_OUT" "secondmate sm: skipped: dirty working tree" "dirty separate clone is skipped"
+  [ "$(head_of "$w/sm")" = "$before" ] || fail "dirty separate clone HEAD moved"
+  grep -q 'uncommitted local edit' "$w/sm/AGENTS.md" || fail "dirty edit was discarded"
+  pass "T18 separate clone: a dirty home is still skipped after the commit is acquired"
+}
+
+# --- T19: a diverged separate clone is skipped, its own commit preserved --------
+test_separate_clone_diverged_skipped() {
+  local w base before
+  w=$(new_world sep-diverged)
+  add_separate_clone "$w" sm
+  printf 'fork work\n' > "$w/sm/AGENTS.md"
+  git -C "$w/sm" add -A
+  git -C "$w/sm" commit -qm local-work
+  before=$(head_of "$w/sm")
+  bump_primary "$w" instr
+  base=$(primary_head_commit "$w/main")
+
+  FM_ROOT="$w/main" FM_HOME="$w/home" run_ff "$w/sm" "$base"
+
+  [ "$FF_STATUS" = skipped ] || fail "FF_STATUS: expected skipped, got '$FF_STATUS': $FF_OUT"
+  assert_contains "$FF_OUT" "secondmate sm: skipped: diverged from $base" "diverged separate clone is skipped"
+  [ "$(head_of "$w/sm")" = "$before" ] || fail "diverged separate clone HEAD moved (unlanded work at risk)"
+  pass "T19 separate clone: a diverged home is skipped after acquisition, its commit preserved"
+}
+
+# --- T20: a wrong-branch separate clone is skipped, its work preserved ----------
+# A separate clone carrying in-flight work sits on a named feature branch; even
+# with the commit acquired, the ff helper refuses to move it off that branch.
+test_separate_clone_wrong_branch_skipped() {
+  local w base before
+  w=$(new_world sep-wrongbranch)
+  add_separate_clone "$w" sm
+  git -C "$w/sm" checkout -q -b feature/wip
+  printf 'work in progress\n' >> "$w/sm/README.md"
+  git -C "$w/sm" add -A
+  git -C "$w/sm" commit -qm wip
+  before=$(head_of "$w/sm")
+  bump_primary "$w" instr
+  base=$(primary_head_commit "$w/main")
+
+  FM_ROOT="$w/main" FM_HOME="$w/home" run_ff "$w/sm" "$base"
+
+  [ "$FF_STATUS" = skipped ] || fail "FF_STATUS: expected skipped, got '$FF_STATUS': $FF_OUT"
+  assert_contains "$FF_OUT" "secondmate sm: skipped: on feature/wip, expected main" \
+    "a separate clone on a feature branch is skipped"
+  [ "$(head_of "$w/sm")" = "$before" ] || fail "wrong-branch separate clone HEAD moved (work at risk)"
+  pass "T20 separate clone: a wrong-branch home is skipped after acquisition, its work preserved"
+}
+
 test_ff_updated
 test_ff_current
 test_ff_dirty
@@ -670,5 +801,10 @@ test_seed_marker_clean_when_gitignored
 test_seed_marker_converges_existing_home
 test_seed_marker_does_not_mask_real_dirt
 test_repo_gitignores_seed_marker
+test_separate_clone_converges_via_local_primary
+test_separate_clone_skipped_without_primary
+test_separate_clone_dirty_skipped
+test_separate_clone_diverged_skipped
+test_separate_clone_wrong_branch_skipped
 
 echo "# all fm-secondmate-sync tests passed"
