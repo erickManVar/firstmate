@@ -35,6 +35,20 @@ A claude coordinator with no model or effort pinned from any source launches on 
 Backend selection starts from the existing spawn contract (`--backend`, `FM_BACKEND`, `config/backend`, runtime auto-detection, then tmux), with one launcher-owned bridge: when no explicit `--backend` is given and that resolution lands on cmux, which cannot host a secondmate coordinator, the launcher starts the coordinator on tmux and prints a note.
 Orca hosts coordinators natively and is never bridged; an explicit `--backend` is always forwarded verbatim.
 
+## Inspect or ensure every project coordinator
+
+```sh
+bin/fm-secondmate-fleet.sh status
+bin/fm-secondmate-fleet.sh ensure
+bin/fm-secondmate-fleet.sh ensure --backend orca
+```
+
+Run these commands from the primary firstmate home.
+`status` is read-only and reports each project-bearing registered secondmate as live, stopped, unknown, or needing metadata reconciliation.
+`ensure` runs the same attach-or-start safety decision as the daily launcher for every project route: it reuses a confirmed-live coordinator, recovers a confirmed-dead endpoint on its recorded backend, and refuses to launch when liveness is inconclusive.
+It never creates a worker worktree or edits a project checkout.
+The optional `--backend` applies only to coordinators that need a launch decision; an existing recorded backend remains authoritative during recovery.
+
 ## Daily Orca workflow
 
 With the Orca backend selected (typically `config/backend=orca`), each project's coordinator lives natively in its own Orca terminal inside the project's `.secondmate` worktree - `docs/orca-backend.md` ("Secondmate hosting") owns the mechanics.

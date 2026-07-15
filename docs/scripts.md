@@ -8,7 +8,11 @@ The shared no-mistakes gate refusal used by `fm-spawn.sh`, `fm-send.sh`, and `fm
 | Script                   | Purpose                                                                              |
 | ------------------------ | ------------------------------------------------------------------------------------ |
 | `fm-session-start.sh`    | Compose lock, bootstrap, and wake drain into the single ordered session-start digest |
+| `firstmate`              | Ergonomic primary-session entry alias for `fm-primary-entry.sh`                      |
 | `fm-primary-entry.sh`    | Captain entry command (`firstmate <claude\|codex>`): anchor to the repo root, resume or start the primary session (docs/primary-entry.md) |
+| `secondmate`             | Ergonomic project-secondmate launcher alias for `fm-secondmate.sh`                   |
+| `fm-secondmate.sh`       | Route a project to its persistent coordinator, attach if live, or safely recover a confirmed-dead endpoint (docs/project-secondmate.md) |
+| `fm-secondmate-fleet.sh` | Read fleet-level secondmate status or idempotently ensure project coordinators without creating worker worktrees (docs/project-secondmate.md) |
 | `fm-session-recap.sh`    | SessionStart hook helper: source-aware bounded fleet recap context for fresh, cleared, resumed, or compacted primary sessions |
 | `fm-bootstrap.sh`        | Detect toolchain and fleet problems, run the locked session-start sweeps, and install approved tools |
 | `fm-fleet-sync.sh`       | Refresh project clones with safe fast-forwards, self-heals, `STUCK:` reports, branch pruning, and bounded recovery from an orphaned `.git/packed-refs.lock` |
@@ -38,6 +42,7 @@ The shared no-mistakes gate refusal used by `fm-spawn.sh`, `fm-send.sh`, and `fm
 | `backends/orca.sh`       | Experimental Orca backend adapter owning both worktree and terminal                  |
 | `backends/cmux.sh`       | Experimental cmux session-provider adapter                                           |
 | `fm-config-push.sh`      | Push declared inheritable local config to live secondmate homes mid-session          |
+| `fm-project-init.sh`     | Guardedly register a shared project container and seed its persistent project secondmate (docs/project-secondmate.md) |
 | `fm-project-route.sh`    | Resolve a project to registered secondmate routes without reading private chats       |
 | `fm-project-mode.sh`     | Resolve a project's delivery mode and `+yolo` flag from `data/projects.md`           |
 | `fm-merge-local.sh`      | Fast-forward a `local-only` project's local default branch after approval            |
