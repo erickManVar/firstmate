@@ -149,6 +149,15 @@ test_missing_charter_fails_before_mutation() {
   pass "missing charter fails before any mutation"
 }
 
+test_unsafe_secondmate_id_fails_before_mutation() {
+  before=$(cat "$HOME_DIR/data/projects.md")
+  out=$("$INIT" glamora --id ../../escaped --charter "Own the Glamora product line" 2>&1) && fail "unsafe secondmate id must be refused"
+  assert_contains "$out" "unsafe secondmate id" "unsafe id is named"
+  [ "$(cat "$HOME_DIR/data/projects.md")" = "$before" ] || fail "unsafe id must not rewrite the registry"
+  assert_absent "$TMP/escaped" "unsafe id must not escape the data directory"
+  pass "unsafe secondmate id fails before path construction"
+}
+
 test_happy_path_single_repo
 test_rerun_is_idempotent
 test_conflicting_rerun_fails_closed
@@ -157,5 +166,6 @@ test_seed_failure_rolls_back_registry
 test_local_only_refused
 test_non_primary_role_fails_closed
 test_missing_charter_fails_before_mutation
+test_unsafe_secondmate_id_fails_before_mutation
 
 echo "fm-project-init: all tests passed"

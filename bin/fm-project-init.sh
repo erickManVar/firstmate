@@ -224,6 +224,9 @@ fi
 [ -n "$CHARTER" ] || CHARTER=${FM_SECONDMATE_CHARTER:-}
 [ -n "$SCOPE" ] || SCOPE=${FM_SECONDMATE_SCOPE:-}
 [ -n "$ID" ] || ID=$NAME
+case "$ID" in
+  ''|.*|*[!A-Za-z0-9._-]*) echo "error: unsafe secondmate id: $ID" >&2; exit 1 ;;
+esac
 BRIEF="$DATA/$ID/brief.md"
 if [ -z "$CHARTER" ] && [ ! -f "$BRIEF" ]; then
   echo "error: no charter: pass --charter/--charter-file (the captain's product intent and secondmate scope) or pre-fill $BRIEF" >&2

@@ -229,29 +229,34 @@ if [ -f "$META" ]; then
   # The backend target, not the window alias: for Orca the recorded terminal
   # handle is what capture/liveness/kill operate on (fm_backend_target_of_meta).
   TARGET=$(fm_backend_target_of_meta "$META")
+  meta_kind=$(meta_value "$META" kind)
   meta_home=$(meta_value "$META" home)
-  if [ -n "$meta_home" ] && [ "$meta_home" != "$HOME_PATH" ]; then
-    echo "error: state/$ID.meta records home $meta_home but the registry routes to $HOME_PATH; reconcile before launching" >&2
+  if [ "$meta_kind" != secondmate ] || [ "$meta_home" != "$HOME_PATH" ]; then
+    echo "error: state/$ID.meta is not the routed secondmate record for $HOME_PATH; reconcile before launching" >&2
     exit 1
   fi
-  if [ -n "$TARGET" ] && fm_backend_target_exists "$BACKEND" "$TARGET" "fm-$ID"; then
-    verdict=$(fm_backend_agent_alive "$BACKEND" "$TARGET")
-    case "$verdict" in
-      alive)
-        ACTION=attach
-        ;;
-      dead)
-        # Confirmed bare shell left by an exited agent: clear it and respawn,
-        # exactly like the session-start liveness sweep.
-        fm_backend_kill "$BACKEND" "$TARGET" 2>/dev/null || true
-        ACTION=spawn
-        ;;
-      *)
-        echo "error: endpoint $TARGET exists but its agent liveness is unproven (backend=$BACKEND); refusing to launch a possible duplicate" >&2
-        echo "inspect it (bin/fm-peek.sh or the $BACKEND UI) and retry, or tear it down explicitly" >&2
-        exit 1
-        ;;
-    esac
+  if [ -n "$TARGET" ]; then
+    if fm_backend_target_exists "$BACKEND" "$TARGET" "fm-$ID"; then
+      verdict=$(fm_backend_agent_alive "$BACKEND" "$TARGET")
+      case "$verdict" in
+        alive)
+          ACTION=attach
+          ;;
+        dead)
+          fm_backend_kill "$BACKEND" "$TARGET" 2>/dev/null || true
+          ACTION=spawn
+          ;;
+        *)
+          echo "error: endpoint $TARGET exists but its agent liveness is unproven (backend=$BACKEND); refusing to launch a possible duplicate" >&2
+          echo "inspect it (bin/fm-peek.sh or the $BACKEND UI) and retry, or tear it down explicitly" >&2
+          exit 1
+          ;;
+      esac
+    elif [ "$BACKEND" = orca ]; then
+      echo "error: could not verify recorded Orca endpoint $TARGET; refusing to launch a possible duplicate" >&2
+      echo "inspect it in the Orca UI and retry, or tear it down explicitly" >&2
+      exit 1
+    fi
   fi
 fi
 

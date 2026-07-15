@@ -110,7 +110,9 @@ case "$HARNESS/$MODE" in
   codex/resume) CMD=(codex resume --last --yolo) ;;
   codex/new) CMD=(codex --yolo) ;;
 esac
-CMD+=(${FWD[@]+"${FWD[@]}"})
+if [ "${#FWD[@]}" -gt 0 ]; then
+  CMD+=("${FWD[@]}")
+fi
 
 # Recommended coordinator posture, claude only (see header): inject the pair
 # only when the caller supplied neither axis, and always before the fresh-mode
@@ -118,12 +120,14 @@ CMD+=(${FWD[@]+"${FWD[@]}"})
 if [ "$HARNESS" = claude ]; then
   has_model=0
   has_effort=0
-  for a in ${FWD[@]+"${FWD[@]}"}; do
-    case "$a" in
-      --model|--model=*) has_model=1 ;;
-      --effort|--effort=*) has_effort=1 ;;
-    esac
-  done
+  if [ "${#FWD[@]}" -gt 0 ]; then
+    for a in "${FWD[@]}"; do
+      case "$a" in
+        --model|--model=*) has_model=1 ;;
+        --effort|--effort=*) has_effort=1 ;;
+      esac
+    done
+  fi
   if [ "$has_model" -eq 0 ] && [ "$has_effort" -eq 0 ]; then
     CMD+=(--model claude-fable-5 --effort medium)
   fi

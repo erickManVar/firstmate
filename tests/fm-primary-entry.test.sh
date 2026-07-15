@@ -112,6 +112,11 @@ run_entry 0 "-- escape" claude -- --new
   || fail "-- forwards a would-be firstmate flag to the harness (posture pair still appended)"
 pass "-- stops firstmate's own flag scan"
 
+run_entry 0 "quoted forwarding" claude -- "space value"
+grep -qx 'arg=space value' "$FM_FAKE_LOG" || fail "a quoted forwarded argument must remain one argument"
+[ "$(grep -c '^arg=space$\|^arg=value$' "$FM_FAKE_LOG")" -eq 0 ] || fail "a quoted forwarded argument must not split"
+pass "quoted harness arguments forward as one element"
+
 # --- fresh mode ---------------------------------------------------------------
 
 run_entry 0 "claude --new" claude --new

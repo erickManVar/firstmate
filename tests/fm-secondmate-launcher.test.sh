@@ -313,6 +313,31 @@ test_meta_home_disagreement_fails_closed() {
   pass "meta home disagreeing with the routed home fails closed"
 }
 
+test_non_secondmate_metadata_fails_closed() {
+  reset_state
+  {
+    echo "window=firstmate:fm-alpha-sm"
+    echo "kind=ship"
+    echo "home=$SM_HOME"
+  } > "$HOME_DIR/state/alpha-sm.meta"
+  out=$("$LAUNCHER" codex --no-attach 2>&1) && fail "non-secondmate metadata must refuse launch"
+  assert_contains "$out" "not the routed secondmate record" "metadata kind mismatch is named"
+  assert_no_grep "spawn:" "$FM_FAKE_SPAWN_LOG" "non-secondmate metadata must not be overwritten"
+  pass "non-secondmate metadata fails closed"
+}
+
+test_missing_meta_home_fails_closed() {
+  reset_state
+  {
+    echo "window=firstmate:fm-alpha-sm"
+    echo "kind=secondmate"
+  } > "$HOME_DIR/state/alpha-sm.meta"
+  out=$("$LAUNCHER" codex --no-attach 2>&1) && fail "metadata without an exact home must refuse launch"
+  assert_contains "$out" "not the routed secondmate record" "missing metadata home is named"
+  assert_no_grep "spawn:" "$FM_FAKE_SPAWN_LOG" "metadata without a home must not be overwritten"
+  pass "secondmate metadata requires an exact routed home"
+}
+
 test_launch_lock_serializes() {
   reset_state
   mkdir -p "$HOME_DIR/state/.secondmate-launch-alpha-sm.lock"
@@ -412,6 +437,15 @@ test_orca_unproven_liveness_fails_closed() {
   pass "unprovable Orca endpoint identity fails closed"
 }
 
+test_orca_unreadable_endpoint_fails_closed() {
+  reset_state
+  write_orca_sm_meta
+  out=$("$LAUNCHER" claude --no-attach 2>&1) && fail "an unreadable Orca endpoint must refuse launch"
+  assert_contains "$out" "could not verify recorded Orca endpoint" "unreadable Orca endpoint is named"
+  assert_no_grep "spawn:" "$FM_FAKE_SPAWN_LOG" "an unreadable Orca endpoint must not duplicate the coordinator"
+  pass "unreadable Orca endpoint fails closed"
+}
+
 test_stale_launch_lock_recovered_when_owner_provably_dead() {
   reset_state
   local lock="$HOME_DIR/state/.secondmate-launch-alpha-sm.lock" deadpid
@@ -486,6 +520,8 @@ test_version_named_live_agent_attaches
 test_dead_endpoint_is_killed_and_respawned
 test_unproven_liveness_fails_closed
 test_meta_home_disagreement_fails_closed
+test_non_secondmate_metadata_fails_closed
+test_missing_meta_home_fails_closed
 test_launch_lock_serializes
 test_concurrent_homes_are_independent
 test_spawn_refusal_surfaces
@@ -495,6 +531,7 @@ test_explicit_orca_backend_forwarded_verbatim
 test_orca_live_coordinator_attaches_without_duplicate
 test_orca_dead_coordinator_killed_and_respawned_on_recorded_backend
 test_orca_unproven_liveness_fails_closed
+test_orca_unreadable_endpoint_fails_closed
 test_stale_launch_lock_recovered_when_owner_provably_dead
 test_concurrent_stale_reclaimers_admit_exactly_one
 test_stale_launch_lock_with_live_owner_fails_closed
