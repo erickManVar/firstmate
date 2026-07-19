@@ -132,7 +132,7 @@ EOF
 }
 
 test_registry_drives_containers_and_repo_selection() {
-  local out err names bad_home bad_base
+  local out err names bad_home bad_base beta_container beta_api
   setup_container_world
   err="$TMP_ROOT/container.err"
   names=$(resolver_call "$MAIN_HOME" 'fm_project_registry_names') \
@@ -151,6 +151,19 @@ test_registry_drives_containers_and_repo_selection() {
   out=$(resolver_call "$MAIN_HOME" 'fm_project_resolve_arg alpha/web') \
     || fail "alpha/web caller selector did not resolve"
   [ "$out" = "$ALPHA_WEB" ] || fail "alpha/web resolved incorrectly: $out"
+  out=$(resolver_call "$MAIN_HOME" 'fm_project_resolve_arg service') \
+    || fail "unique bare repo selector did not resolve"
+  [ "$out" = "$GAMMA_REPO" ] || fail "unique bare repo selector escaped its registered canonical repo: $out"
+  beta_container="$ORCA_BASE/beta"
+  beta_api="$beta_container/api"
+  mkdir -p "$beta_container"
+  make_repo "$beta_api" "$TMP_ROOT/remotes/beta-api.git"
+  printf '%s\n' '- beta [direct-PR] - beta product (repos: api; added 2026-07-13)' >> "$MAIN_HOME/data/projects.md"
+  if resolver_call "$MAIN_HOME" 'fm_project_resolve_arg api' > /dev/null 2>"$err"; then
+    fail "ambiguous bare repo selector was accepted"
+  fi
+  assert_grep 'repo selector api is ambiguous across registered projects; use <project>/<repo>' "$err" \
+    "ambiguous bare repo selector did not require an explicit project/repo selector"
   out=$(resolver_call "$MAIN_HOME" "fm_project_resolve_arg '$ALPHA_WEB/src'") \
     || fail "registered repo subdirectory did not resolve"
   [ "$out" = "$ALPHA_WEB" ] || fail "registered repo subdirectory did not resolve to its repo: $out"
@@ -266,6 +279,10 @@ test_container_seed_is_reference_only_and_colocated() {
     || fail "container seed cloned repos into the secondmate home"
   assert_grep "$ORCA_BASE" "$ALPHA_HOME/config/projects-root" "project base was not inherited"
   assert_grep 'repos: api, web' "$ALPHA_HOME/data/projects.md" "explicit repo registry was not inherited"
+  out=$(resolver_call "$ALPHA_HOME" 'fm_project_resolve_arg api') \
+    || fail "Secondmate bare repo selector did not resolve through its copied registry"
+  [ "$out" = "$ALPHA_API" ] || fail "Secondmate bare repo selector resolved outside the canonical alpha/api repo: $out"
+  [ "$out" != "$ALPHA_HOME" ] || fail "Secondmate home was accepted as a task source"
   [ "$before_api" = "$(git -C "$ALPHA_API" status --porcelain=v1; git -C "$ALPHA_API" rev-parse HEAD)" ] \
     || fail "seed mutated alpha/api"
   [ "$before_web" = "$(git -C "$ALPHA_WEB" status --porcelain=v1; git -C "$ALPHA_WEB" rev-parse HEAD)" ] \

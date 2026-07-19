@@ -42,7 +42,7 @@ Pass `--no-projects` instead of a project list to scaffold a project-less charte
 Re-seeding a populated home as project-less is refused non-destructively when the home contains project clones or `data/projects.md` entries.
 Retire or clean that home first, and re-scaffold a stale project-bearing charter with `--no-projects` before seeding.
 Keep the charter focused on the persistent responsibility, available project clones, escalation back to the main firstmate status file, and the requests-from-main-firstmate contract.
-The scaffold's definition of done encodes the idle-by-default contract: on startup the secondmate reconciles only its own in-flight work and then waits for routed tasks, never self-initiating a survey or audit.
+The scaffold's definition of done encodes the idle-by-default contract: on startup the secondmate reconciles only its own in-flight work without cleanup, teardown, auditing, or dispatch, then asks the captain what they want to work on before it acts.
 Preserve that wording when filling the charter, including the marker rule that marked supervisor requests return through status or a doc pointer while unmarked captain messages stay conversational.
 
 Provision the persistent home and registry entry after the charter is filled:
@@ -85,9 +85,9 @@ This is secondmate-only: crewmate/scout model resolution is untouched by this fi
 
 This section is the single owner of the secondmate sync and inheritable-config propagation contract; `AGENTS.md` sections 3 and 4 point here.
 Before launch, `fm-spawn.sh --secondmate` locally fast-forwards the home to the primary firstmate checkout's current default-branch commit when it is safe; dirty, diverged, or in-flight homes launch unchanged with a warning.
-The locked session-start bootstrap sweep runs the same guarded fast-forward for every live secondmate home, discovered from `state/<id>.meta` records with `kind=secondmate` (`data/secondmates.md` only backfills `home=` for older records).
+The project-local explicit-resume path runs the same guarded fast-forward for that selected secondmate home.
 That no-fetch path is a purely local fast-forward of tracked files, never an origin fetch, and it never touches the gitignored operational dirs, so a secondmate's backlog, projects, and in-flight work are never disturbed; a linked worktree advances immediately, while a standalone clone that lacks the target receives firstmate updates through `/updatefirstmate`'s origin refresh.
-The same launch and the same locked bootstrap sweep also propagate the primary's declared inheritable local config, currently `config/crew-dispatch.json`, `config/crew-harness`, `config/backlog-backend`, and the project-container base in `config/projects-root`, into the secondmate home's `config/`.
+The same launch/resume path propagates the primary's declared inheritable local config, currently `config/crew-dispatch.json`, `config/crew-harness`, `config/backlog-backend`, and the project-container base in `config/projects-root`, into the secondmate home's `config/`.
 Because `config/` is gitignored, that propagation is a separate, primary-authoritative copy independent of the tracked-files fast-forward: it re-converges every live home whether or not its tracked files advanced, and it touches only the declared items.
 Inheritance copies the literal `config/crew-harness` file, so a secondmate's own crewmates use the primary's crewmate harness only when it names a concrete adapter such as `codex`; an unset or `default` value has nothing concrete to inherit, and the secondmate's own crewmates fall back to the secondmate's own or detected harness instead.
 `config/secondmate-harness` is not inherited because it is only the primary's knob for launching secondmate agents.
@@ -134,15 +134,16 @@ Do not hand off `local-only` items.
 
 ## Recovery
 
-For `kind=secondmate` meta with no window, treat the secondmate as a dead persistent direct report and respawn it with:
+For `kind=secondmate` meta with no window, treat the secondmate as a stopped persistent direct report, not a startup repair job.
+Do not respawn it from the primary's recovery or bootstrap path.
+Resume it only when the captain enters that project's container and explicitly invokes:
 
 ```sh
-bin/fm-spawn.sh <id> --secondmate
+secondmate <harness>
 ```
 
-Use the recorded `home=` in meta.
-If meta is missing but `data/secondmates.md` still registers the secondmate, respawn from the registry entry and its persistent on-disk home.
-Respawn re-resolves the secondmate harness from current config, uses the same guarded pre-launch sync, and re-propagates inheritable config, so recovered secondmates converge to the primary firstmate version, local dispatch, crew-harness, backlog-backend, and project-catalog settings whenever their home can be cleanly fast-forwarded.
+The project-local launcher resolves the recorded `home=`, safely handles a confirmed-dead endpoint, and uses the registered home when metadata is absent.
+It re-resolves the secondmate harness from current config, uses the same guarded pre-launch sync, and re-propagates inheritable config, so resumed secondmates converge to the primary firstmate version, local dispatch, crew-harness, backlog-backend, and project-catalog settings whenever their home can be cleanly fast-forwarded.
 If the secondmate is already running and only inherited config changed, prefer `bin/fm-config-push.sh` over respawning.
 
 Do not reconstruct a secondmate's whole tree from the main home.

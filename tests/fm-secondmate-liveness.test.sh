@@ -283,7 +283,7 @@ run_bootstrap() {  # <fakebin> <home> <pane-cmd> <call-log> [extra env...] -> st
     env "$@" "$ROOT/bin/fm-bootstrap.sh" 2>&1
 }
 
-test_sweep_respawns_confirmed_dead_secondmate() {
+test_sweep_reports_confirmed_dead_secondmate_without_mutation() {
   local w fb tmuxfb log out
   w=$(new_world sweep-dead)
   add_sm_home "$w" sm1 firstmate:fm-sm1
@@ -292,13 +292,10 @@ test_sweep_respawns_confirmed_dead_secondmate() {
 
   out=$(run_bootstrap "$tmuxfb:$fb" "$w/home" zsh "$log")
 
-  assert_contains "$out" "SECONDMATE_LIVENESS: secondmate sm1: respawned" \
-    "a bare-shell (dead) secondmate should be reported as respawned"
-  assert_contains "$(cat "$log")" "kill-window -t firstmate:fm-sm1" \
-    "the stale endpoint must be killed before respawn (tmux refuses a same-named window over a live one)"
-  assert_contains "$(cat "$log")" "new-window" \
-    "a confirmed-dead secondmate should actually be relaunched"
-  pass "sweep: a confirmed-dead secondmate endpoint is killed and respawned"
+  assert_contains "$out" "SECONDMATE_LIVENESS: secondmate sm1: stopped" \
+    "a bare-shell (dead) secondmate should be reported as stopped"
+  [ ! -s "$log" ] || fail "startup must not kill or relaunch a stopped coordinator: $(cat "$log")"
+  pass "sweep: a confirmed-dead coordinator is reported without mutation"
 }
 
 test_sweep_leaves_alive_secondmate_untouched() {
@@ -310,10 +307,10 @@ test_sweep_leaves_alive_secondmate_untouched() {
 
   out=$(run_bootstrap "$tmuxfb:$fb" "$w/home" claude "$log")
 
-  assert_contains "$out" "SECONDMATE_LIVENESS: secondmate sm1: already-live" \
-    "a live claude foreground process should be reported as already-live"
-  [ ! -s "$log" ] || fail "an already-live secondmate must never be killed or respawned: $(cat "$log")"
-  pass "sweep: an already-live secondmate is left untouched (no kill, no respawn)"
+  assert_not_contains "$out" "SECONDMATE_LIVENESS:" \
+    "a live coordinator should stay quiet in the startup report"
+  [ ! -s "$log" ] || fail "an already-live secondmate must never be touched: $(cat "$log")"
+  pass "sweep: an already-live secondmate is left untouched and quiet"
 }
 
 test_sweep_never_acts_on_inconclusive_reading() {
@@ -327,9 +324,9 @@ test_sweep_never_acts_on_inconclusive_reading() {
   # "Known gap") - ANY reading less than confident-dead must never respawn.
   out=$(run_bootstrap "$tmuxfb:$fb" "$w/home" node "$log")
 
-  assert_contains "$out" "SECONDMATE_LIVENESS: secondmate sm1: skipped: liveness probe inconclusive" \
-    "an inconclusive (unknown) probe reading should be reported as skipped"
-  [ ! -s "$log" ] || fail "an inconclusive reading must NEVER trigger a kill or respawn (would risk a duplicate agent): $(cat "$log")"
+  assert_contains "$out" "SECONDMATE_LIVENESS: secondmate sm1: liveness unproven" \
+    "an inconclusive probe reading should be reported as unproven"
+  [ ! -s "$log" ] || fail "an inconclusive reading must never mutate an endpoint: $(cat "$log")"
   pass "sweep: a transient/unknown probe reading is reported but never acted on"
 }
 
@@ -342,31 +339,31 @@ test_sweep_never_acts_on_unverified_harness_dead_reading() {
 
   out=$(run_bootstrap "$tmuxfb:$fb" "$w/home" zsh "$log")
 
-  assert_contains "$out" "SECONDMATE_LIVENESS: secondmate sm1: skipped: liveness probe inconclusive" \
-    "an unverified harness should not let a dead-looking endpoint become actionable"
-  [ ! -s "$log" ] || fail "an unverified harness must NEVER trigger a kill or respawn: $(cat "$log")"
-  pass "sweep: an unverified harness makes a dead-looking probe inconclusive"
+  assert_contains "$out" "SECONDMATE_LIVENESS: secondmate sm1: stopped" \
+    "a stopped endpoint is reported independently from its recorded harness"
+  [ ! -s "$log" ] || fail "an unverified harness must never trigger endpoint mutation: $(cat "$log")"
+  pass "sweep: stopped endpoints are report-only for every harness"
 }
 
-test_sweep_converges_no_retouch_once_alive() {
+test_sweep_never_retouches_across_reports() {
   local w fb tmuxfb log out1 out2
   w=$(new_world sweep-idempotent)
   add_sm_home "$w" sm1 firstmate:fm-sm1
   fb=$(make_toolchain "$w"); tmuxfb=$(make_liveness_tmux "$w")
   log="$w/calls.log"; : > "$log"
 
-  # Round 1: dead -> respawned (kill + new-window logged).
+  # Round 1: a stopped coordinator is reported, not restarted.
   out1=$(run_bootstrap "$tmuxfb:$fb" "$w/home" zsh "$log")
-  assert_contains "$out1" "SECONDMATE_LIVENESS: secondmate sm1: respawned" "round 1 should respawn the dead secondmate"
-  [ -s "$log" ] || fail "round 1 should have logged the kill+respawn window operations"
+  assert_contains "$out1" "SECONDMATE_LIVENESS: secondmate sm1: stopped" "round 1 should report the stopped coordinator"
+  [ ! -s "$log" ] || fail "round 1 must not start or stop the coordinator"
 
-  # Round 2: the (now-respawned) secondmate is genuinely alive - a second
-  # sweep must converge to a pure no-op, not respawn again.
+  # Round 2: when the coordinator becomes live through an explicit local
+  # resume, bootstrap remains quiet and still does not touch it.
   : > "$log"
   out2=$(run_bootstrap "$tmuxfb:$fb" "$w/home" claude "$log")
-  assert_contains "$out2" "SECONDMATE_LIVENESS: secondmate sm1: already-live" "round 2 should see the now-live secondmate and stop touching it"
-  [ ! -s "$log" ] || fail "round 2 must not re-kill or re-respawn an already-live secondmate: $(cat "$log")"
-  pass "sweep: idempotent by construction - a live secondmate is never re-touched on a later run"
+  assert_not_contains "$out2" "SECONDMATE_LIVENESS:" "round 2 should keep a live coordinator quiet"
+  [ ! -s "$log" ] || fail "round 2 must not touch an already-live secondmate: $(cat "$log")"
+  pass "sweep: startup reports but never re-touches coordinators"
 }
 
 test_sweep_skipped_under_detect_only() {
@@ -408,11 +405,11 @@ test_sweep_noop_with_no_secondmate_meta() {
 test_tmux_agent_alive_classifies
 test_herdr_agent_alive_maps_pane_agent_state
 test_agent_alive_dispatcher_routes_and_falls_back
-test_sweep_respawns_confirmed_dead_secondmate
+test_sweep_reports_confirmed_dead_secondmate_without_mutation
 test_sweep_leaves_alive_secondmate_untouched
 test_sweep_never_acts_on_inconclusive_reading
 test_sweep_never_acts_on_unverified_harness_dead_reading
-test_sweep_converges_no_retouch_once_alive
+test_sweep_never_retouches_across_reports
 test_sweep_skipped_under_detect_only
 test_sweep_noop_with_no_secondmate_meta
 

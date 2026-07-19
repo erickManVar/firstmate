@@ -167,6 +167,7 @@ When the config or override is present, every project line must use this form:
 The project container is the same-named direct child `<projects-root>/<project>` and must be a real non-git directory.
 Every comma-separated repo name is an explicit direct, non-symlink child of that container and must be a Git worktree root.
 Repo order is preserved, duplicate repo names are invalid, and a bare project selector works only when exactly one repo is registered; use `<project>/<repo>` for a multi-repo container.
+A bare repo-name selector is also accepted when it identifies exactly one registered repo across the catalog, so `ggstore-vite` resolves to its registered canonical repo rather than a Secondmate home; ambiguous names such as `api` fail closed and require `<project>/<repo>`.
 The resolver never scans the configured base or a container to invent entries.
 Dot-prefixed names cannot be projects or repos, and `firstmate`, `workspaces`, `projects`, `state`, `data`, and `config` are reserved container names.
 These rules exclude Orca's task worktrees and the colocated `.secondmate` operational home by construction.
@@ -307,10 +308,8 @@ If bootstrap kills a timed-out refresh, it replays any completed `fm-fleet-sync.
 A killed refresh (or a teardown process kill) can leave an orphaned `.git/packed-refs.lock` in a clone, which makes the next refresh's fetch fail with Git's `Unable to create '...packed-refs.lock': File exists`.
 On that signature only, `fm-fleet-sync.sh` retries the fetch with a bounded wait for the lock to self-clear, then removes the lock and retries once more only when it can prove the lock stale, exactly like the `fm-teardown.sh` `index.lock` recovery.
 It never removes a live lock, leaves any other failure shape untouched, and prints every wait, retry, and removal to stderr plus a one-line `recovered:` summary to stdout on success so that this session-start relay still surfaces the recovery.
-The locked session-start bootstrap step also runs the guarded local secondmate sync for recorded live secondmate homes, then propagates declared inheritable local config into each validated live home.
-It emits `SECONDMATE_SYNC:` only when a home was skipped for an actionable sync reason or config inheritance failed, and `NUDGE_SECONDMATES:` only when a running home advanced and its instruction surface (`AGENTS.md`, `bin/`, or `.agents/skills/`) changed.
-`NUDGE_SECONDMATES:` lists stable `fm-<id>` task selectors; the `bootstrap-diagnostics` skill owns the send procedure.
-The same bootstrap run also emits `SECONDMATE_LIVENESS:` for live secondmate endpoints: `already-live` and `respawned` are handled states, while `skipped` or `respawn failed` means the secondmate still needs attention.
+The locked session-start bootstrap step never synchronizes, nudges, kills, or resumes a project coordinator.
+It emits `SECONDMATE_LIVENESS:` only for stopped or unproven recorded endpoints, which require explicit project-local inspection or `secondmate <harness>`.
 For a mid-session inherited config edit where tracked-file sync and reread nudges are not needed, run `bin/fm-config-push.sh`.
 It uses the same live secondmate discovery and propagation helper as bootstrap, prints each live home's `crew-dispatch.json`, `crew-harness`, `backlog-backend`, and `projects-root` result as `pushed`, `unchanged`, `skipped`, or `error`, and exits non-zero only for real propagation errors.
 That live discovery starts from `state/*.meta` records with `kind=secondmate`; `data/secondmates.md` only backfills `home=` for older or incomplete meta records.

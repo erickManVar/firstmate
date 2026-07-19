@@ -1,15 +1,12 @@
 #!/usr/bin/env bash
-# Fleet-level status and idempotent ensure command for persistent secondmates.
+# Fleet-level status command for persistent secondmates.
 #
 # Usage:
 #   fm-secondmate-fleet.sh status
-#   fm-secondmate-fleet.sh ensure [--backend <tmux|herdr|zellij|orca>]
+# Project-local `secondmate <harness>` is the only normal start or resume path.
 #
-# Homes are always persistent. `status` is read-only; `ensure` routes every
-# project-bearing registered home through fm-secondmate.sh, which safely
-# attaches to a confirmed-live coordinator, respawns a confirmed-dead one, and
-# refuses to duplicate an inconclusive endpoint. This command never creates a
-# worker worktree and never edits a project.
+# Homes are always persistent and coordinators run only when useful.
+# `status` is read-only and never starts, synchronizes, or nudges a coordinator.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -20,12 +17,12 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-backend.sh"
 
 usage() {
-  echo "usage: fm-secondmate-fleet.sh <status|ensure> [--backend <tmux|herdr|zellij|orca>]" >&2
+  echo "usage: fm-secondmate-fleet.sh status" >&2
 }
 
 MODE=${1:-}
 [ -n "$MODE" ] && shift || true
-case "$MODE" in status|ensure) ;; *) usage; exit 1 ;; esac
+case "$MODE" in status) ;; *) usage; exit 1 ;; esac
 
 BACKEND=
 while [ "$#" -gt 0 ]; do
@@ -88,14 +85,6 @@ while IFS=$'\t' read -r id home projects; do
     continue
   fi
 
-  args=(auto "$project" --no-attach)
-  [ -z "$BACKEND" ] || args+=(--backend "$BACKEND")
-  if output=$("$FM_ROOT/bin/fm-secondmate.sh" "${args[@]}" 2>&1); then
-    echo "$id: $output"
-  else
-    echo "$id: failed: $output" >&2
-    failures=1
-  fi
 done <<EOF
 $routes
 EOF
