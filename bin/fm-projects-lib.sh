@@ -518,7 +518,7 @@ EOF
 }
 
 fm_project_name_from_arg() {
-  local arg=$1 selector project repo
+  local arg=$1 selector project repo path leaf_status
   selector=$arg
   case "$selector" in
     projects/*) selector=${selector#projects/} ;;
@@ -538,6 +538,17 @@ fm_project_name_from_arg() {
           return
         fi
         ;;
+      esac
+  fi
+  if [ "$(fm_projects_mode)" = shared-external ] && [ "$selector" = "$project" ]; then
+    if path=$(fm_project_path_by_repo_name "$selector"); then
+      leaf_status=0
+    else
+      leaf_status=$?
+    fi
+    case "$leaf_status" in
+      0) fm_project_name_for_path "$path"; return ;;
+      2) return 1 ;;
     esac
   fi
   fm_project_name_for_path "$arg"

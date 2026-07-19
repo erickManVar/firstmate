@@ -765,7 +765,7 @@ For secondmates use `bin/fm-brief.sh <id> --secondmate {<project>...|--no-projec
 The scaffold writes a charter brief instead of a task brief.
 Set `FM_SECONDMATE_CHARTER='<charter>'` to fill the charter text and `FM_SECONDMATE_SCOPE='<scope>'` when the routing scope differs.
 If you scaffold without `FM_SECONDMATE_CHARTER`, replace the `{TASK}` placeholder before seeding.
-Keep the charter focused on persistent responsibility, available project access, escalation back to the main firstmate status file, and the idle-by-default contract: reconcile only its own in-flight work and then wait, never self-initiating a survey or audit.
+Keep the charter focused on persistent responsibility, available project access, escalation back to the main firstmate status file, and the idle-by-default contract: reconcile only its own in-flight work, then greet the captain and ask what they want to work on, never self-initiating a survey or audit.
 Preserve the requests-from-main-firstmate contract in the charter: marked requests return via status or a doc pointer, while unmarked direct captain messages stay conversational.
 Before seeding, launching, recovering, or handing backlog to a secondmate home, load `secondmate-provisioning`.
 The status-reporting protocol is intentionally sparse: crewmates append status only for supervisor-actionable phase changes, `needs-decision`/`blocked`/`paused`/`done`/`failed`, or the `resolved` line that closes a previously reported decision or blocker, because every append wakes firstmate.

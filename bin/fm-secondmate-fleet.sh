@@ -36,7 +36,6 @@ trim() {
   printf '%s\n' "$value"
 }
 
-failures=0
 while IFS=$'\t' read -r id home projects; do
   [ -n "$id" ] || continue
   project=$(trim "${projects%%,*}")
@@ -45,36 +44,33 @@ while IFS=$'\t' read -r id home projects; do
     continue
   fi
 
-  if [ "$MODE" = status ]; then
-    meta="$STATE/$id.meta"
-    if [ ! -f "$meta" ]; then
-      echo "$id: stopped (project: $project)"
-      continue
-    fi
-    meta_kind=$(sed -n 's/^kind=//p' "$meta" | head -1)
-    meta_home=$(sed -n 's/^home=//p' "$meta" | head -1)
-    if [ "$meta_kind" != secondmate ] || [ "$meta_home" != "$home" ]; then
-      echo "$id: metadata mismatch (project: $project; reconcile before recovery)"
-      continue
-    fi
-    backend=$(sed -n 's/^backend=//p' "$meta" | head -1)
-    [ -n "$backend" ] || backend=tmux
-    target=$(fm_backend_target_of_meta "$meta" 2>/dev/null || true)
-    if [ -z "$target" ]; then
-      echo "$id: metadata incomplete (project: $project)"
-      continue
-    fi
-    verdict=$(fm_backend_agent_alive "$backend" "$target" 2>/dev/null || true)
-    case "$verdict" in
-      alive) echo "$id: live (backend: $backend; project: $project)" ;;
-      dead) echo "$id: stopped (recover from the project container with: secondmate <harness>)" ;;
-      *) echo "$id: unknown (backend: $backend; inspect before recovery)" ;;
-    esac
+  meta="$STATE/$id.meta"
+  if [ ! -f "$meta" ]; then
+    echo "$id: stopped (project: $project)"
     continue
   fi
+  meta_kind=$(sed -n 's/^kind=//p' "$meta" | head -1)
+  meta_home=$(sed -n 's/^home=//p' "$meta" | head -1)
+  if [ "$meta_kind" != secondmate ] || [ "$meta_home" != "$home" ]; then
+    echo "$id: metadata mismatch (project: $project; reconcile before recovery)"
+    continue
+  fi
+  backend=$(sed -n 's/^backend=//p' "$meta" | head -1)
+  [ -n "$backend" ] || backend=tmux
+  target=$(fm_backend_target_of_meta "$meta" 2>/dev/null || true)
+  if [ -z "$target" ]; then
+    echo "$id: metadata incomplete (project: $project)"
+    continue
+  fi
+  verdict=$(fm_backend_agent_alive "$backend" "$target" 2>/dev/null || true)
+  case "$verdict" in
+    alive) echo "$id: live (backend: $backend; project: $project)" ;;
+    dead) echo "$id: stopped (recover from the project container with: secondmate <harness>)" ;;
+    *) echo "$id: unknown (backend: $backend; inspect before recovery)" ;;
+  esac
 
 done <<EOF
 $routes
 EOF
 
-exit "$failures"
+exit 0

@@ -154,6 +154,9 @@ test_registry_drives_containers_and_repo_selection() {
   out=$(resolver_call "$MAIN_HOME" 'fm_project_resolve_arg service') \
     || fail "unique bare repo selector did not resolve"
   [ "$out" = "$GAMMA_REPO" ] || fail "unique bare repo selector escaped its registered canonical repo: $out"
+  out=$(resolver_call "$MAIN_HOME" 'fm_project_name_from_arg service') \
+    || fail "unique bare repo selector did not resolve to its registered project"
+  [ "$out" = gamma ] || fail "unique bare repo selector did not retain its project owner: $out"
   beta_container="$ORCA_BASE/beta"
   beta_api="$beta_container/api"
   mkdir -p "$beta_container"
@@ -164,6 +167,11 @@ test_registry_drives_containers_and_repo_selection() {
   fi
   assert_grep 'repo selector api is ambiguous across registered projects; use <project>/<repo>' "$err" \
     "ambiguous bare repo selector did not require an explicit project/repo selector"
+  if resolver_call "$MAIN_HOME" 'fm_project_name_from_arg api' > /dev/null 2>"$err"; then
+    fail "ambiguous bare repo selector was accepted for project ownership lookup"
+  fi
+  assert_grep 'repo selector api is ambiguous across registered projects; use <project>/<repo>' "$err" \
+    "ambiguous bare repo ownership lookup did not require an explicit project/repo selector"
   out=$(resolver_call "$MAIN_HOME" "fm_project_resolve_arg '$ALPHA_WEB/src'") \
     || fail "registered repo subdirectory did not resolve"
   [ "$out" = "$ALPHA_WEB" ] || fail "registered repo subdirectory did not resolve to its repo: $out"
@@ -358,6 +366,16 @@ test_registry_sync_and_route_from_container_context() {
   out=$(cd "$ALPHA_API" && FM_HOME="$MAIN_HOME" "$ROOT/bin/fm-project-route.sh") \
     || fail "route lookup from a registered repo failed"
   assert_contains "$out" 'project=alpha' "repo route did not map back to its container project"
+
+  printf -- '- gamma-sm - gamma domain (home: %s; scope: gamma product work; projects: gamma; added 2026-07-13)\n' \
+    "$GAMMA_CONTAINER/.secondmate" >> "$MAIN_HOME/data/secondmates.md"
+  out=$(FM_HOME="$MAIN_HOME" "$ROOT/bin/fm-project-route.sh" service) \
+    || fail "route lookup from a unique bare repo selector failed"
+  assert_contains "$out" 'project=gamma' "bare repo route did not map to its registered project"
+  assert_contains "$out" 'route=gamma-sm' "bare repo route did not preserve the canonical project route"
+  out=$(FM_HOME="$MAIN_HOME" "$ROOT/bin/fm-project-mode.sh" service) \
+    || fail "project mode lookup from a unique bare repo selector failed"
+  [ "$out" = 'no-mistakes off' ] || fail "bare repo mode did not preserve the registered project mode: $out"
 
   err="$TMP_ROOT/unregistered-fleet-sync.err"
   set +e
