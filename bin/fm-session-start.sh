@@ -154,7 +154,7 @@ if [ "$LOCK_RC" -ne 0 ]; then
     printf '%s\n' "$BAR"
     printf '●  READ-ONLY SESSION - ANOTHER LIVE FIRSTMATE SESSION HOLDS THE FLEET LOCK\n'
     printf '●  %s\n' "$LOCK_OUT"
-    printf '●  Skipping every mutating step: secondmate sync, X-mode artifacts,\n'
+    printf '●  Skipping every mutating step: X-mode artifacts,\n'
     printf '●  fleet sync, and wake-queue drain. Detect-only bootstrap diagnostics and\n'
     printf '●  the rest of this read-only-safe digest still ran below.\n'
     printf '●  Operate read-only until this resolves - do not spawn, steer, merge, or\n'

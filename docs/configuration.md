@@ -34,7 +34,7 @@ Zellij and Orca are never auto-detected; select them by putting the name in a lo
 Any value other than `tmux`, `herdr`, `zellij`, `orca`, or `cmux` is rejected until another adapter is implemented and verified.
 `fm-spawn.sh` accepts `tmux`, `herdr`, `zellij`, `orca`, and `cmux` for ship and scout tasks; `--secondmate` spawns run on `tmux`, `herdr`, `zellij`, and `orca` (which adopts the provisioned home as its Orca worktree; `docs/orca-backend.md` "Secondmate hosting"), while `backend=cmux` still refuses `--secondmate` until its secondmate launch semantics are designed.
 `codex-app` is not an accepted runtime backend yet; [`docs/codex-app-backend.md`](codex-app-backend.md) owns the Codex App boundary.
-The session-start secondmate liveness sweep uses a deeper `fm_backend_agent_alive` probe where verified.
+The session-start secondmate liveness report uses a deeper `fm_backend_agent_alive` probe where verified.
 Today that probe can classify tmux, herdr, and Orca secondmate endpoints as `alive`, `dead`, or `unknown`; zellij and cmux report `unknown` until their own agent-process classifiers are verified.
 A herdr spawn additionally version-gates against the installed `herdr` binary's protocol and requires `jq`, refusing loudly on an incompatible or missing installation.
 A zellij spawn additionally version-gates against the installed `zellij` binary's version and requires `jq`, refusing loudly when either is missing or the version is older than 0.44.
@@ -127,7 +127,7 @@ This does not relax protection for any other untracked file.
 An existing linked-worktree home that predates this rule advances through its marker-only state during its next bootstrap or spawn local sync, after which Git ignores the marker normally.
 A standalone-clone home cannot receive a primary-local commit through that no-fetch sync, so it receives the rule through `/updatefirstmate`'s origin refresh instead.
 
-Use `bin/fm-secondmate-fleet.sh status` to inspect every registered persistent coordinator. Use `bin/fm-secondmate-fleet.sh ensure` when you want every project-bearing coordinator live: it attaches to healthy coordinators, recovers only confidently dead ones, and fails closed for an unproven endpoint. Persistent homes do not count as primary in-flight work; each live coordinator guards and supervises its own workers from its own `FM_HOME`.
+Use `bin/fm-secondmate-fleet.sh status` to inspect every registered persistent coordinator. Start or resume one only from its project container with `secondmate <harness>`; fleet status never starts, synchronizes, or nudges a coordinator. Persistent homes do not count as primary in-flight work; each live coordinator guards and supervises its own workers from its own `FM_HOME`.
 
 ## FM_HOME
 
@@ -209,7 +209,7 @@ When the harness token is absent or `default`, secondmate launch falls back thro
 An explicit harness argument to `fm-spawn.sh` still overrides either config file for that spawn only.
 An explicit `--model` or `--effort` overrides the matching token from `config/secondmate-harness`; an explicit harness or raw launch command starts with clean model and effort defaults unless those flags are also passed.
 When `config/crew-dispatch.json` exists, crewmate and scout spawns require an explicit resolved harness instead of automatically falling back to `config/crew-harness`.
-The primary propagates `config/crew-dispatch.json`, `config/crew-harness`, `config/backlog-backend`, and `config/projects-root` into secondmate homes at seed or spawn, during the locked session-start bootstrap secondmate sweep, and during explicit `bin/fm-config-push.sh` runs.
+The primary propagates `config/crew-dispatch.json`, `config/crew-harness`, `config/backlog-backend`, and `config/projects-root` into secondmate homes at seed or explicit spawn, and during explicit `bin/fm-config-push.sh` runs.
 `config/secondmate-harness` is not inherited because secondmates do not launch secondmates.
 For grok, `fm-spawn.sh` installs one firstmate-owned global turn-end hook under `$GROK_HOME/hooks/`, or `~/.grok/hooks/` when `GROK_HOME` is unset, and drops a per-task `.fm-grok-turnend` pointer in the worktree, with teardown removing the task token and pointer.
 For Pi secondmate launches, `fm-spawn.sh` starts Pi with `-e` pointed at the secondmate home's own tracked `.pi/extensions/fm-primary-pi-watch.ts` and `.pi/extensions/fm-primary-turnend-guard.ts`, both already present from the secondmate home's git worktree.

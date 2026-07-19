@@ -12,23 +12,8 @@
 #                 "FLEET_SYNC: <repo>: skipped|recovered|STUCK: <detail>",
 #                 "FLEET_SYNC: <fleet-sync failure detail>",
 #                 "TASKS_AXI: available", "TANGLE: <remediation>",
-#                 "SECONDMATE_SYNC: secondmate <id>: skipped: <reason>",
-#                 "NUDGE_SECONDMATES: fm-<id>...",
 #                 "SECONDMATE_LIVENESS: secondmate <id>: stopped|liveness unproven",
 #                 "FMX: X mode on ..." or "FMX: X mode off ...".
-#          A NUDGE_SECONDMATES line lists the RUNNING secondmate task selectors
-#          (fm-<id>) whose worktree was fast-forwarded to firstmate's own
-#          current default-branch commit (a purely LOCAL fast-forward, never an
-#          origin fetch) AND whose instruction surface (AGENTS.md, bin/, or
-#          .agents/skills/) actually changed; firstmate nudges each via
-#          bin/fm-send.sh fm-<id> so meta resolves the current backend target
-#          without starting, stopping, or otherwise changing that coordinator.
-#          Already-current or no-instruction-change homes are silently left alone.
-#          The secondmate sweep also propagates declared inheritable local config
-#          into each validated live secondmate home.
-#          SECONDMATE_SYNC lines report actionable skipped local-HEAD syncs or
-#          config-inheritance failures for live secondmate homes; no-op/current
-#          and successful updates stay quiet.
 #          SECONDMATE_LIVENESS lines report only a coordinator that needs an
 #          explicit project-local resume. Healthy endpoints are already in the
 #          session-start fleet digest and remain quiet. This is read-only:
@@ -67,7 +52,7 @@
 #          checkout command. Used by
 #          fm-session-start.sh's read-only path when another live session holds
 #          the fleet lock, so a second concurrent session never race-mutates
-#          secondmate homes, X-mode artifacts, project clones, or repair
+#          X-mode artifacts, project clones, or repair
 #          instructions. Unset/0 (the default) runs every sweep exactly as
 #          before - this flag is purely additive.
 #        fm-bootstrap.sh install <tool>...

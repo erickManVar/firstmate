@@ -3,7 +3,7 @@
 # secondmate coordinators: home adoption (never creation), titled-terminal
 # reuse and duplicate prevention, the lsof cwd-based agent-liveness classifier,
 # fm-spawn.sh's --secondmate --backend orca path, and the session-start
-# liveness sweep respawning a dead Orca secondmate without falling back to tmux.
+# report-only startup liveness for an Orca secondmate without mutating it.
 #
 # Uses a subcommand-keyed fake `orca` (unlike tests/fm-backend-orca.test.sh's
 # sequence-keyed fake) because the secondmate spawn path's call count varies by
@@ -483,87 +483,6 @@ test_teardown_retires_orca_secondmate_closing_only_terminal() {
   pass "fm-teardown.sh: an Orca-hosted secondmate retires by closing its terminal, never orca worktree rm"
 }
 
-# --- sweep level: session-start liveness recovery on the Orca backend --------
-
-make_sweep_toolchain() {  # <dir> -> echoes fakebin dir (bootstrap read-only diagnostics stay quiet)
-  local dir=$1 fakebin
-  fakebin=$(fm_fakebin "$dir")
-  fm_fake_exit0 "$fakebin" gh-axi chrome-devtools-axi lavish-axi gh
-  cat > "$fakebin/no-mistakes" <<'SH'
-#!/usr/bin/env bash
-if [ "${1:-}" = --version ]; then
-  printf '%s\n' 'no-mistakes version v1.31.2 (fake)'
-  exit 0
-fi
-exit 0
-SH
-  chmod +x "$fakebin/no-mistakes"
-  printf '%s\n' "$fakebin"
-}
-
-test_sweep_respawns_dead_orca_secondmate_natively() {
-  local id primary smhome fb out
-  id="orcasmswph9"
-  orca_sm_case sweep-dead-orca
-  primary="$CASE_DIR/primary"; make_primary_home "$primary"
-  printf 'claude\n' > "$primary/config/crew-harness"
-  smhome="$CASE_DIR/proj/.secondmate"; make_sm_home "$smhome" "$id"
-  fb=$(make_sweep_toolchain "$CASE_DIR")
-  fm_write_meta "$primary/state/$id.meta" \
-    "window=fm-$id" "terminal=term-dead" "worktree=$smhome" "project=$smhome" \
-    "harness=claude" "kind=secondmate" "backend=orca" \
-    "orca_worktree_id=wt::$smhome" "home=$smhome"
-  printf '%s\n' "$smhome" > "$CFG/termpath"
-
-  out=$( PATH="$FB:$fb:$PATH" TMUX='' FM_BACKEND=orca FM_HOME="$primary" \
-    FM_ORCA_LOG="$LOG" FM_ORCA_CFG="$CFG" FM_FAKE_LSOF_COMMS="zsh" \
-    "$ROOT/bin/fm-bootstrap.sh" 2>&1 )
-
-  assert_contains "$out" "SECONDMATE_LIVENESS: secondmate $id: respawned" \
-    "a dead Orca secondmate should be respawned by the sweep: $out"
-  assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''close'$'\x1f''--terminal'$'\x1f''term-dead' \
-    "the sweep should close the dead Orca terminal before respawn"
-  assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''create' \
-    "the sweep respawn should create a fresh Orca coordinator terminal"
-  assert_not_contains "$(cat "$LOG")" $'orca\x1f''worktree'$'\x1f''create' \
-    "the sweep respawn must adopt the home, never create a worktree"
-  assert_not_contains "$(cat "$LOG")" $'orca\x1f''worktree'$'\x1f''rm' \
-    "the sweep respawn must never remove the home worktree"
-  assert_grep "backend=orca" "$primary/state/$id.meta" \
-    "the respawned secondmate must stay on the recorded Orca backend, never fall back to tmux"
-  rm -rf "/tmp/fm-$id"
-  pass "secondmate_liveness_sweep: a dead Orca secondmate is respawned natively on the recorded backend"
-}
-
-test_sweep_recorded_backend_wins_over_ambient_resolution() {
-  local id primary smhome fb out
-  id="orcasmswrec0"
-  orca_sm_case sweep-recorded-backend
-  primary="$CASE_DIR/primary"; make_primary_home "$primary"
-  printf 'claude\n' > "$primary/config/crew-harness"
-  smhome="$CASE_DIR/proj/.secondmate"; make_sm_home "$smhome" "$id"
-  fb=$(make_sweep_toolchain "$CASE_DIR")
-  fm_write_meta "$primary/state/$id.meta" \
-    "window=fm-$id" "terminal=term-dead" "worktree=$smhome" "project=$smhome" \
-    "harness=claude" "kind=secondmate" "backend=orca" \
-    "orca_worktree_id=wt::$smhome" "home=$smhome"
-  printf '%s\n' "$smhome" > "$CFG/termpath"
-  # Ambient resolution says tmux; the recorded backend must still win for the
-  # respawn (no tmux fake on PATH, so any tmux fallback would fail loudly).
-  printf 'tmux\n' > "$primary/config/backend"
-
-  out=$( PATH="$FB:$fb:$PATH" TMUX='' FM_HOME="$primary" \
-    FM_ORCA_LOG="$LOG" FM_ORCA_CFG="$CFG" FM_FAKE_LSOF_COMMS="zsh" \
-    "$ROOT/bin/fm-bootstrap.sh" 2>&1 )
-
-  assert_contains "$out" "SECONDMATE_LIVENESS: secondmate $id: respawned" \
-    "the recorded Orca backend should govern the respawn even when ambient resolution says tmux: $out"
-  assert_contains "$(cat "$LOG")" $'orca\x1f''terminal'$'\x1f''create' \
-    "the respawn should go through Orca, not the ambient tmux resolution"
-  rm -rf "/tmp/fm-$id"
-  pass "secondmate_liveness_sweep: the recorded backend wins over ambient resolution for respawn"
-}
-
 test_adopt_resolves_registered_home_without_creating
 test_adopt_registers_missing_repo_once
 test_adopt_refuses_path_mismatch
@@ -579,7 +498,5 @@ test_spawn_secondmate_orca_fails_closed_on_unproven_liveness
 test_spawn_secondmate_orca_refuses_ambiguous_terminals
 test_spawn_secondmate_orca_abort_preserves_home
 test_teardown_retires_orca_secondmate_closing_only_terminal
-test_sweep_respawns_dead_orca_secondmate_natively
-test_sweep_recorded_backend_wins_over_ambient_resolution
 
 echo "# all fm-backend-orca-secondmate tests passed"

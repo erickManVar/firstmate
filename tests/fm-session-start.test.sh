@@ -6,7 +6,7 @@
 # Coverage:
 #   - absent-file markers vs empty-but-present files in the context digest
 #   - the lock-refusal read-only path: banner leads, every mutating step is
-#     skipped (including bootstrap's four mutating sweeps, verified by their
+#     skipped (including bootstrap's two mutating sweeps, verified by their
 #     ABSENCE), the digest still completes
 #   - output section ordering: diagnostics/banners lead, bulk file dumps follow
 #   - context-aware next-step guidance for read-only, AFK, X mode, and normal
@@ -287,11 +287,8 @@ EOF
   make_fake_toolchain "$fakebin"
   make_fake_ps_claude "$fakebin"
 
-  # A live secondmate meta with a window pointed at nothing real - if the
-  # bootstrap sweep's secondmate_sync ran (a MUTATING step), it would try to
-  # fast-forward this "home" and/or report a SECONDMATE_SYNC/NUDGE_SECONDMATES
-  # line. Absence of any such line is this test's proof that
-  # FM_BOOTSTRAP_DETECT_ONLY=1 actually suppressed the mutating sweep.
+  # A live secondmate meta with a window pointed at nothing real proves that
+  # read-only startup leaves a persistent coordinator untouched.
   mkdir -p "$home/other-secondmate/state"
   fm_write_secondmate_meta "$home/state/sm-x.meta" "$home/other-secondmate" "firstmate:fm-sm-x" alpha
   append_wake "$home/state" signal sm-x "done: surfaced before refusal" || fail "seed wake failed"
@@ -330,11 +327,6 @@ EOF
   # deterministically regardless of what is installed on the test host).
   assert_contains "$out" "MISSING: tasks-axi (install:" "detect-only bootstrap diagnostics did not run on the read-only path"
 
-  # The mutating secondmate sweep must NOT have run: no SECONDMATE_SYNC/
-  # NUDGE_SECONDMATES line, and the sowed secondmate meta's target dir is
-  # untouched (fm-ff-lib would have tried to fast-forward it otherwise).
-  assert_not_contains "$out" "SECONDMATE_SYNC" "mutating secondmate sweep ran during a lock refusal"
-  assert_not_contains "$out" "NUDGE_SECONDMATES" "mutating secondmate sweep ran during a lock refusal"
 
   # The rest of the digest (read-only-safe) still completed.
   assert_contains "$out" "FLEET STATE" "fleet-state digest section missing on the read-only path"

@@ -17,7 +17,7 @@
 #   duplicate coordinator for a live home.
 #   When the endpoint is confidently dead (a bare shell left by an exited
 #   agent), the dead endpoint is killed and the secondmate is respawned via
-#   bin/fm-spawn.sh --secondmate, mirroring the session-start liveness sweep.
+#   bin/fm-spawn.sh --secondmate from this explicit project-local invocation.
 #   When liveness cannot be proven either way, the launcher fails closed and
 #   asks for a manual inspection, so a momentary probe glitch can never
 #   duplicate a live supervisor.

@@ -91,10 +91,10 @@ The same launch/resume path propagates the primary's declared inheritable local 
 Because `config/` is gitignored, that propagation is a separate, primary-authoritative copy independent of the tracked-files fast-forward: it re-converges every live home whether or not its tracked files advanced, and it touches only the declared items.
 Inheritance copies the literal `config/crew-harness` file, so a secondmate's own crewmates use the primary's crewmate harness only when it names a concrete adapter such as `codex`; an unset or `default` value has nothing concrete to inherit, and the secondmate's own crewmates fall back to the secondmate's own or detected harness instead.
 `config/secondmate-harness` is not inherited because it is only the primary's knob for launching secondmate agents.
-No reread nudge is needed at spawn or respawn because the agent reads `AGENTS.md` fresh on launch; only the bootstrap sweep's `NUDGE_SECONDMATES:` case (a RUNNING home whose instruction surface advanced) needs one.
+No reread nudge is needed at spawn or respawn because the agent reads `AGENTS.md` fresh on launch.
 For already-live secondmates, use `bin/fm-config-push.sh` to push a mid-session inherited-config change without running the tracked-file fast-forward or nudging the agents.
-It uses the same live-home discovery and propagation helper as bootstrap and reports each item as `pushed`, `unchanged`, `skipped`, or `error`.
-A contract or policy change - the delivery posture and coordinator posture included - never mutates a running secondmate mid-conversation: convergence is shared code landing on the primary default branch, inheritable config propagating through the sweep or `bin/fm-config-push.sh`, and the next restart or respawn reading the new `AGENTS.md` contract from disk while the home keeps its own `data/`, backlog, and history.
+It uses the same live-home discovery and propagation helper as explicit launch and reports each item as `pushed`, `unchanged`, `skipped`, or `error`.
+A contract or policy change - the delivery posture and coordinator posture included - never mutates a running secondmate mid-conversation: convergence is shared code landing on the primary default branch, inheritable config propagating through `bin/fm-config-push.sh`, and the next explicit resume reading the new `AGENTS.md` contract from disk while the home keeps its own `data/`, backlog, and history.
 Existing charters on disk are not rewritten for such a change; a restarted coordinator picks the new intake contract up from `AGENTS.md`, and only newly scaffolded charters carry the updated charter wording directly.
 `bin/fm-home-seed.sh` refuses to copy a missing or placeholder charter.
 

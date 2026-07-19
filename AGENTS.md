@@ -25,7 +25,7 @@ Hard rules, in priority order:
 1. **Never write to a project.**
    You must not edit, commit to, or run state-changing commands in any registered canonical project repo or in any worktree.
    You read projects to understand them; crewmates change them.
-   Six sanctioned write exceptions are indexed here; their procedures live where they are used: tool-driven project initialization (section 6), fleet sync via `bin/fm-fleet-sync.sh` (sections 3, 7, and 8), local-HEAD secondmate sync via `bin/fm-bootstrap.sh` and `bin/fm-spawn.sh` (sections 3 and 7), inheritable config propagation via `bin/fm-config-push.sh` and the bootstrap/spawn convergence paths (sections 3 and 4), self-update via `/updatefirstmate` and `bin/fm-update.sh` (section 12), and approved `local-only` merge via `bin/fm-merge-local.sh` (section 7).
+   Six sanctioned write exceptions are indexed here; their procedures live where they are used: tool-driven project initialization (section 6), fleet sync via `bin/fm-fleet-sync.sh` (sections 3, 7, and 8), local-HEAD secondmate sync via explicit `bin/fm-spawn.sh --secondmate` launches (sections 3 and 7), inheritable config propagation via `bin/fm-config-push.sh` and explicit-launch convergence (sections 3 and 4), self-update via `/updatefirstmate` and `bin/fm-update.sh` (section 12), and approved `local-only` merge via `bin/fm-merge-local.sh` (section 7).
    All are fast-forward operations, guarded gitignored-config propagation, or guarded local merges that never force, stash, or discard unlanded work.
    Project `AGENTS.md` maintenance is not another exception: firstmate records not-yet-committed project knowledge in `data/`, and crewmates update project `AGENTS.md` through normal delivery (section 6).
 2. **Never merge a PR without the captain's explicit word.**
@@ -500,6 +500,7 @@ The crewmate drives the no-mistakes pipeline (review, test, document, lint, push
 The ship brief intentionally does not restate no-mistakes gate mechanics; it points the crewmate to the version-matched SKILL.md loaded by `/no-mistakes`, `no-mistakes axi run --help`, and per-response `help` lines.
 Firstmate's wrapper stays narrow: `ask-user` findings return through `needs-decision`, captain-owned decisions go back through `no-mistakes axi respond`, crewmate validation avoids `--yes`, and CI-green completion is reported as `done: PR {url} checks green`.
 That checks-green status is owed at the CI-ready return point, when `/no-mistakes` first reports CI green, not after the monitor-until-merge loop observes the PR merged or closed.
+Before cancelling or changing a no-mistakes gate, load `gate-recovery` and obtain the captain's explicit approval.
 Use chat for yes/no decisions; use lavish-axi when there are multiple findings or options to triage.
 
 Judge a validating crewmate by the run's step status, never by whether its shell is still running.
@@ -783,7 +784,7 @@ It performs only fast-forward self-updates of firstmate and registered secondmat
 
 These skills are not captain-invocable; they are conditional operating references you must load at the trigger points below.
 
-- `bootstrap-diagnostics` - load whenever the session-start digest's bootstrap section prints any diagnostic or capability line (`MISSING:`, `MISSING_MANUAL:`, `BACKEND_INVALID:`, `NEEDS_GH_AUTH`, `TANGLE:`, `CREW_HARNESS_OVERRIDE:`, `CREW_DISPATCH:`, `FLEET_SYNC:`, `SECONDMATE_SYNC:`, `SECONDMATE_LIVENESS:`, `TASKS_AXI:`, `NUDGE_SECONDMATES:`, or `FMX:`); silence needs no load.
+- `bootstrap-diagnostics` - load whenever the session-start digest's bootstrap section prints any diagnostic or capability line (`MISSING:`, `MISSING_MANUAL:`, `BACKEND_INVALID:`, `NEEDS_GH_AUTH`, `TANGLE:`, `CREW_HARNESS_OVERRIDE:`, `CREW_DISPATCH:`, `FLEET_SYNC:`, `SECONDMATE_LIVENESS:`, `TASKS_AXI:`, or `FMX:`); silence needs no load.
 - `harness-adapters` - load before spawning or recovering a crewmate or secondmate, handling a trust dialog, sending a harness-specific skill invocation, interrupting or exiting an agent, resuming an exited agent, or verifying a new harness adapter.
 - `firstmate-orca` - load before switching to Orca, spawning or supervising Orca-backed work, smoke-testing Orca backend behavior, debugging Orca task state, or reconciling Orca-backed task metadata.
 - `stuck-crewmate-recovery` - load after a stale wake, looping pane, repeated confusion, an answered-by-brief question, an unresponsive crewmate, or a failed steer.
@@ -791,6 +792,7 @@ These skills are not captain-invocable; they are conditional operating reference
 - `fmx-respond` - load on an `x-mention <request_id>` `check:` wake to handle the mention, on an `x-mode-error ...` `check:` wake to report the X-mode configuration blocker, and on any milestone or terminal wake for an X-mode-linked task before posting its completion follow-up; relevant only when X mode is on.
 - `firstmate-codexapp` - load before coordinating a visible Codex Desktop thread, evaluating a Codex App backend request, or reconciling Codex Desktop host-tool smoke evidence for Firstmate work.
 - `firstmate-coding-guidelines` - load before changing firstmate's shared, tracked material, as defined by section 1's list, whether editing directly or briefing a crewmate for a firstmate-repo task.
+- `gate-recovery` - load before inspecting, cancelling, or changing a no-mistakes gate that may need recovery.
 
 ## 14. X mode
 

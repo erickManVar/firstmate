@@ -190,7 +190,7 @@ Firstmate's skills live in two separate places with different audiences:
 - [docs/zellij-backend.md](docs/zellij-backend.md) - setup guide for the experimental zellij backend, plus its verification notes and known gaps.
 - [docs/orca-backend.md](docs/orca-backend.md) - setup guide for the experimental Orca backend, plus its lifecycle notes and known gaps.
 - [docs/primary-entry.md](docs/primary-entry.md) - launch or resume the global primary firstmate session and receive its fleet recap.
-- [docs/project-secondmate.md](docs/project-secondmate.md) - onboard, launch, inspect, and safely ensure a project-level secondmate.
+- [docs/project-secondmate.md](docs/project-secondmate.md) - onboard, launch, inspect, and safely resume a project-level secondmate.
 - [docs/cmux-backend.md](docs/cmux-backend.md) - setup guide for the experimental cmux backend, plus its verification notes and known gaps.
 - [docs/codex-app-backend.md](docs/codex-app-backend.md) - Codex App backend boundary, evidence, and rollout contract.
 - [docs/turnend-guard.md](docs/turnend-guard.md) - the primary session's structural "no turn ends blind" backstop: verified per-harness hook mechanisms, scoping, loop safety, and fail-open tradeoffs.
