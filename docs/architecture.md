@@ -131,7 +131,7 @@ Seeding is transactional: if validation, cloning, initialization, inheritance, o
 An external shared checkout is validated but never enters rollback ownership.
 `local-only` projects stay with the main first mate because they merge into the main local checkout instead of a remote-backed PR path.
 The same project may appear in multiple secondmate homes when their scopes differ, such as issue triage versus feature development.
-Secondmates are idle by default: after startup recovery reconciles only work already in their own home, an empty queue waits silently for routed tasks, and they never self-initiate surveys or audits.
+Secondmates are idle by default: after startup recovery reconciles only work already in their own home, they greet the captain for explicit intake when no work is queued and never self-initiate surveys or audits.
 The primary can inspect all project-bearing coordinators with `bin/fm-secondmate-fleet.sh status`; the captain starts or resumes a selected coordinator from its project container through `secondmate <harness>`, as documented in [project-secondmate.md](project-secondmate.md).
 When called with `FM_HOME=<this-firstmate-home>` or when `FM_HOME` is already set to the active firstmate home, metadata-routed `fm-send.sh` requests to a live `kind=secondmate` are prefixed with the from-firstmate marker from `bin/fm-marker-lib.sh`, so the secondmate returns terse answers through status lines and detailed answers through docs plus status pointers instead of replying only in its own chat.
 Explicit backend-target sends and direct human typing stay unmarked, so captain intervention in a secondmate pane remains conversational.
@@ -232,7 +232,7 @@ The mechanics are owned by the `/updatefirstmate` skill and firstmate's operatin
 
 Fleet state lives in each task's session-provider backend (tmux by hard default, herdr or cmux when selected or auto-detected, zellij/orca when explicitly selected), no-mistakes run records, status event logs, local markdown under `data/` including `data/captain.md` and `data/learnings.md`, and persistent secondmate homes.
 For herdr, respawning after a server-restored layout closes and replaces confirmed no-agent or dead task-tab husks instead of requiring manual tab cleanup.
-At session start, confirmed-dead secondmate agent endpoints are closed and relaunched through the same secondmate spawn path, while ambiguous liveness reads are left untouched to avoid duplicate supervisors.
+At session start, confirmed-dead or metadata-incomplete secondmate endpoints are reported as stopped, while ambiguous liveness reads are reported as unproven; the captain may resume a coordinator only through an explicit project-local `secondmate <harness>` invocation.
 Use `/stow` before an intentional reset when the conversation may hold durable knowledge that has not yet been written to disk; after that, the next firstmate session can reconcile and carry on.
 
 ## Development notes

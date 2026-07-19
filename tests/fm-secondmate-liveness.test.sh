@@ -291,6 +291,23 @@ test_sweep_reports_confirmed_dead_secondmate_without_mutation() {
   pass "sweep: a confirmed-dead coordinator is reported without mutation"
 }
 
+test_sweep_reports_secondmate_without_window_as_stopped() {
+  local w fb tmuxfb log out
+  w=$(new_world sweep-no-window)
+  add_sm_home "$w" sm1 firstmate:fm-sm1
+  grep -v '^window=' "$w/home/state/sm1.meta" > "$w/home/state/sm1.meta.next"
+  mv "$w/home/state/sm1.meta.next" "$w/home/state/sm1.meta"
+  fb=$(make_toolchain "$w"); tmuxfb=$(make_liveness_tmux "$w")
+  log="$w/calls.log"; : > "$log"
+
+  out=$(run_bootstrap "$tmuxfb:$fb" "$w/home" zsh "$log")
+
+  assert_contains "$out" "SECONDMATE_LIVENESS: secondmate sm1: stopped" \
+    "a secondmate without endpoint metadata should be reported as stopped"
+  [ ! -s "$log" ] || fail "missing endpoint metadata must not mutate a coordinator: $(cat "$log")"
+  pass "sweep: a secondmate without endpoint metadata is reported as stopped"
+}
+
 test_sweep_leaves_alive_secondmate_untouched() {
   local w fb tmuxfb log out
   w=$(new_world sweep-alive)
@@ -399,6 +416,7 @@ test_tmux_agent_alive_classifies
 test_herdr_agent_alive_maps_pane_agent_state
 test_agent_alive_dispatcher_routes_and_falls_back
 test_sweep_reports_confirmed_dead_secondmate_without_mutation
+test_sweep_reports_secondmate_without_window_as_stopped
 test_sweep_leaves_alive_secondmate_untouched
 test_sweep_never_acts_on_inconclusive_reading
 test_sweep_never_acts_on_unverified_harness_dead_reading

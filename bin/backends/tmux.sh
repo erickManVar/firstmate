@@ -179,8 +179,8 @@ fm_backend_tmux_is_version_command() {  # <comm>
 #             with no reliable way to attribute it back to pi from outside
 #             the pane - docs/tmux-backend.md "Known gaps"), or an unreadable
 #             pane. Callers must never treat unknown as a confirmed-dead
-#             signal (bin/fm-bootstrap.sh's secondmate-liveness sweep gates a
-#             respawn on `dead` only).
+#             signal. Bootstrap reports `dead` as stopped; only an explicit
+#             project-local launcher can recover a confirmed-dead endpoint.
 fm_backend_tmux_agent_alive() {  # <target>
   local target=$1 comm
   comm=$(fm_backend_tmux_current_command "$target") || { printf 'unknown'; return 0; }

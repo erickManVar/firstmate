@@ -199,7 +199,10 @@ secondmate_liveness_sweep() {
     grep -q '^kind=secondmate$' "$meta" 2>/dev/null || continue
     id=$(basename "$meta" .meta)
     window=$(fm_meta_get "$meta" window)
-    [ -n "$window" ] || continue
+    if [ -z "$window" ]; then
+      echo "SECONDMATE_LIVENESS: secondmate $id: stopped"
+      continue
+    fi
     backend=$(fm_backend_of_meta "$meta")
     target=$(fm_backend_target_of_meta "$meta")
     [ -n "$target" ] || target="$window"
