@@ -2,15 +2,14 @@
 # tests/fm-secondmate-liveness.test.sh - the session-start secondmate LIVENESS
 # guarantee: bin/fm-backend.sh's fm_backend_agent_alive probe (dispatching to
 # fm_backend_tmux_agent_alive / fm_backend_herdr_agent_alive) and
-# bin/fm-bootstrap.sh's secondmate_liveness_sweep() that acts on it.
+# bin/fm-bootstrap.sh's report-only secondmate_liveness_sweep().
 #
 # The gap under test (AGENTS.md "Session start"; evidence 2026-07-07): a
 # secondmate agent that has exited leaves its backend endpoint alive as a bare
 # shell. fm_backend_target_exists only checks pane PRESENCE, so it reports
-# that shell "alive"; recovery only respawns endpoints reported dead, and the
-# watcher deliberately exempts secondmates from stale-pane detection (an idle
-# secondmate pane is healthy by design). A dead-shell secondmate was therefore
-# invisible to every existing check and sat dead indefinitely.
+# that shell "alive"; the watcher deliberately exempts secondmates from
+# stale-pane detection because an idle secondmate pane is healthy by design.
+# A dead-shell secondmate was therefore invisible to every existing check.
 #
 # The guarantees under test:
 #   - fm_backend_tmux_agent_alive classifies a verified-harness foreground
@@ -21,16 +20,10 @@
 #     live -> alive, unknown -> unknown.
 #   - fm_backend_agent_alive routes to the right per-backend classifier and
 #     reports unknown for a backend with no verified classifier (never errors).
-#   - bin/fm-bootstrap.sh's secondmate_liveness_sweep respawns a confidently
-#     DEAD secondmate (killing the stale endpoint first, since the tmux
-#     adapter refuses to create a same-named window over a live one), leaves
-#     an ALIVE one untouched, and never acts on an inconclusive (UNKNOWN)
-#     reading.
-#   - The sweep converges: once a secondmate reads alive, a later run never
-#     re-touches it (idempotent by construction, not by remembering what it
-#     already did).
-#   - The sweep is skipped entirely under FM_BOOTSTRAP_DETECT_ONLY=1 (the
-#     read-only session path), matching the other mutating sweeps.
+#   - bin/fm-bootstrap.sh's secondmate_liveness_sweep reports a confidently
+#     DEAD secondmate as stopped, leaves an ALIVE one quiet, and reports an
+#     inconclusive (UNKNOWN) reading as unproven without acting on either.
+#   - The report runs under FM_BOOTSTRAP_DETECT_ONLY=1 because it is read-only.
 #   - The sweep is naturally scoped to the primary: with no kind=secondmate
 #     meta present (a secondmate's own state/ never holds one, since
 #     secondmates never spawn secondmates), it is a silent no-op.
@@ -366,7 +359,7 @@ test_sweep_never_retouches_across_reports() {
   pass "sweep: startup reports but never re-touches coordinators"
 }
 
-test_sweep_skipped_under_detect_only() {
+test_sweep_reports_under_detect_only() {
   local w fb tmuxfb log out
   w=$(new_world sweep-detect-only)
   add_sm_home "$w" sm1 firstmate:fm-sm1
@@ -379,10 +372,10 @@ test_sweep_skipped_under_detect_only() {
 
   assert_contains "$out" "CREW_HARNESS_OVERRIDE: codex" \
     "detect-only should still execute fm-bootstrap.sh's read-only diagnostics"
-  assert_not_contains "$out" "SECONDMATE_LIVENESS:" \
-    "the read-only detect-only path must never run the mutating liveness sweep"
+  assert_contains "$out" "SECONDMATE_LIVENESS: secondmate sm1: stopped" \
+    "detect-only should report stopped coordinators through the read-only liveness sweep"
   [ ! -s "$log" ] || fail "detect-only must never touch any endpoint: $(cat "$log")"
-  pass "sweep: skipped entirely under FM_BOOTSTRAP_DETECT_ONLY=1, exactly like the other mutating sweeps"
+  pass "sweep: reports under FM_BOOTSTRAP_DETECT_ONLY=1 without endpoint mutation"
 }
 
 test_sweep_noop_with_no_secondmate_meta() {
@@ -410,7 +403,7 @@ test_sweep_leaves_alive_secondmate_untouched
 test_sweep_never_acts_on_inconclusive_reading
 test_sweep_never_acts_on_unverified_harness_dead_reading
 test_sweep_never_retouches_across_reports
-test_sweep_skipped_under_detect_only
+test_sweep_reports_under_detect_only
 test_sweep_noop_with_no_secondmate_meta
 
 echo "# all fm-secondmate-liveness tests passed"

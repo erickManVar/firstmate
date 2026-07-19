@@ -124,8 +124,8 @@ Set `FM_SECONDMATE_CHARTER` to seed from inline charter text when no filled char
 Each seed writes an `.fm-secondmate-home` identity marker at the home root.
 The tracked root `.gitignore` ignores that marker, so validation can read it without making a freshly seeded home appear dirty to porcelain-based safety checks.
 This does not relax protection for any other untracked file.
-An existing linked-worktree home that predates this rule advances through its marker-only state during its next bootstrap or spawn local sync, after which Git ignores the marker normally.
-A standalone-clone home cannot receive a primary-local commit through that no-fetch sync, so it receives the rule through `/updatefirstmate`'s origin refresh instead.
+An existing linked-worktree home that predates this rule advances through its marker-only state during an explicit project-local secondmate start or resume, after which Git ignores the marker normally.
+A standalone-clone home receives the rule through `/updatefirstmate`'s origin refresh rather than primary-startup synchronization.
 
 Use `bin/fm-secondmate-fleet.sh status` to inspect every registered persistent coordinator. Start or resume one only from its project container with `secondmate <harness>`; fleet status never starts, synchronizes, or nudges a coordinator. Persistent homes do not count as primary in-flight work; each live coordinator guards and supervises its own workers from its own `FM_HOME`.
 

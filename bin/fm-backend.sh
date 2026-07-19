@@ -698,9 +698,9 @@ fm_backend_target_exists() {  # <backend> <target> [expected-label]
 # under <target>, distinct from fm_backend_target_exists's pane-PRESENCE-only
 # check above. A secondmate agent that has exited leaves its backend endpoint
 # alive as a bare shell; fm_backend_target_exists reports that shell as
-# "alive" because the pane itself still exists, which is exactly the gap
-# bin/fm-bootstrap.sh's session-start secondmate-liveness sweep exists to
-# close (AGENTS.md "Session start"). Prints one of:
+# "alive" because the pane itself still exists. The session-start liveness
+# report surfaces that gap without changing it (AGENTS.md "Session start").
+# Prints one of:
 #   alive   - a real agent process is confirmed running.
 #   dead    - CONFIDENTLY not an agent: a bare shell (tmux) or a
 #             structurally-gone/no-agent-registered pane (herdr).
@@ -713,9 +713,9 @@ fm_backend_target_exists() {  # <backend> <target> [expected-label]
 # foreground-process primitive). zellij and cmux report unknown until
 # independently verified.
 # Callers must treat unknown exactly like an unreadable target: NEVER license
-# an action from it alone - the secondmate-liveness sweep gates a respawn on
-# `dead` only, precisely so a momentary read glitch can never duplicate a
-# live supervisor.
+# an action from it alone. The explicit project-local launcher resumes only
+# after a `dead` result, so a momentary read glitch cannot duplicate a live
+# supervisor.
 fm_backend_agent_alive() {  # <backend> <target>
   local backend=$1 target=$2
   fm_backend_source "$backend" || { printf 'unknown'; return 0; }
