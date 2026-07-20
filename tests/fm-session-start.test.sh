@@ -143,7 +143,9 @@ SH
 
 # make_fake_tmux <fakebin> <live-target>: display-message succeeds only for
 # the given "session:window" target - the exact primitive
-# fm_backend_target_exists uses for a tmux endpoint liveness read.
+# fm_backend_target_probe uses for a tmux endpoint liveness read. A missing
+# target prints real tmux's "can't find window" on stderr, the explicit
+# absence evidence fm_backend_target_state requires to classify `missing`.
 make_fake_tmux() {
   local fakebin=$1 live=$2
   cat > "$fakebin/tmux" <<SH
@@ -158,6 +160,7 @@ case "\${1:-}" in
       prev="\$a"
     done
     [ "\$target" = "$live" ] && { printf '%%1\n'; exit 0; }
+    printf '%s\n' "can't find window" >&2
     exit 1
     ;;
 esac
@@ -177,6 +180,7 @@ make_fake_herdr() {
 set -u
 if [ "\${1:-}" = pane ] && [ "\${2:-}" = get ]; then
   [ "\${3:-}" = "$live" ] && exit 0
+  printf '{"error":{"code":"pane_not_found"}}\n' >&2
   exit 1
 fi
 exit 1

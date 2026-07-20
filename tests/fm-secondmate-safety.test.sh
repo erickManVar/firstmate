@@ -1960,13 +1960,13 @@ test_secondmate_charter_brief_is_idle_by_default() {
   scaffold_secondmate_charter "$home" idle-sm 'feature work for alpha' alpha
   brief="$home/data/idle-sm/brief.md"
   [ -f "$brief" ] || fail "secondmate charter brief was not scaffolded"
-  # Idle contract: waits for routed work, never self-initiates.
-  grep -F 'go idle and wait silently for the main firstmate' "$brief" >/dev/null \
-    || fail "charter brief does not tell the secondmate to go idle and wait for routed work"
-  grep -F 'Act only on tasks the main firstmate routes to you' "$brief" >/dev/null \
-    || fail "charter brief does not restrict work to routed tasks"
-  grep -F 'never spawn a survey, audit, or any self-directed' "$brief" >/dev/null \
-    || fail "charter brief does not forbid self-initiated survey/audit work"
+  # Idle contract: captain-led after quiet recovery, never self-initiates.
+  grep -F 'greet the captain and ask what they want to work on' "$brief" >/dev/null \
+    || fail "charter brief does not tell the secondmate to greet the captain and wait for direction"
+  grep -F 'Act only on tasks the captain explicitly assigns within the registered project scope above or the main firstmate routes to you' "$brief" >/dev/null \
+    || fail "charter brief does not restrict work to captain-assigned or routed tasks"
+  grep -F 'never spawn a survey, audit, cleanup, or any self-directed' "$brief" >/dev/null \
+    || fail "charter brief does not forbid self-initiated survey/audit/cleanup work"
   # Reconcile-on-startup must remain: bootstrap and recovery still run, scoped to own work.
   grep -F 'run normal firstmate bootstrap and recovery' "$brief" >/dev/null \
     || fail "charter brief dropped the bootstrap/recovery reconciliation step"
