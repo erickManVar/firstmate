@@ -194,6 +194,28 @@ test_target_state_leaves_backend_failures_unproven() {
   pass "fm_backend_target_state: leaves backend failures unproven"
 }
 
+# Cold tmux boot: all tmux endpoint state lives in the server process, so both
+# documented server-absent client signatures (docs/tmux-backend.md "Cold-boot
+# endpoint absence") are confirmed absence, while any other connection error
+# stays unknown and fails closed.
+test_target_state_recognizes_tmux_cold_boot_as_absence() {
+  local out
+  out=$(bash -c '. "$0/bin/fm-backend.sh"; fm_backend_target_probe() { printf "no server running on /private/tmp/tmux-501/default\\n" >&2; return 1; }; fm_backend_target_state tmux sess:win' "$ROOT")
+  [ "$out" = missing ] || fail "a no-server-running tmux probe should classify as missing, got '$out'"
+
+  out=$(bash -c '. "$0/bin/fm-backend.sh"; fm_backend_target_probe() { printf "error connecting to /private/tmp/tmux-501/default (No such file or directory)\\n" >&2; return 1; }; fm_backend_target_state tmux sess:win' "$ROOT")
+  [ "$out" = missing ] || fail "a gone-socket tmux connection error should classify as missing, got '$out'"
+
+  pass "fm_backend_target_state: recognizes both tmux server-absent signatures as confirmed absence"
+}
+
+test_target_state_leaves_other_tmux_connection_errors_unproven() {
+  local out
+  out=$(bash -c '. "$0/bin/fm-backend.sh"; fm_backend_target_probe() { printf "error connecting to /private/tmp/tmux-501/default (Permission denied)\\n" >&2; return 1; }; fm_backend_target_state tmux sess:win' "$ROOT")
+  [ "$out" = unknown ] || fail "a permission-denied tmux connection error must stay unknown, got '$out'"
+  pass "fm_backend_target_state: a non-absence tmux connection error still fails closed"
+}
+
 # --- sweep level: bin/fm-bootstrap.sh's secondmate_liveness_sweep -----------
 
 # make_toolchain <dir>: the fixed set of stubs bin/fm-bootstrap.sh's read-only
@@ -484,6 +506,8 @@ test_agent_alive_dispatcher_routes_and_falls_back
 test_target_state_recognizes_herdr_pane_not_found
 test_target_state_recognizes_orca_stale_terminal
 test_target_state_leaves_backend_failures_unproven
+test_target_state_recognizes_tmux_cold_boot_as_absence
+test_target_state_leaves_other_tmux_connection_errors_unproven
 test_sweep_reports_confirmed_dead_secondmate_without_mutation
 test_sweep_reports_secondmate_without_window_as_stopped
 test_sweep_reports_missing_endpoint_as_stopped

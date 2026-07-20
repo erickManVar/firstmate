@@ -127,6 +127,35 @@ The classifier deliberately reports `unknown` for `node`/`python`/`python3` rath
 Practical effect: a `pi` secondmate with an inconclusive probe is reported as `liveness unproven`; startup remains report-only, so inspect it before any explicit project-local resume.
 Resolving this would need either a `pi`-specific env marker inspectable from outside the process (mirroring `PI_CODING_AGENT=true`, which `bin/fm-harness.sh` already uses for self-detection but which is not readable from a different process without deeper introspection) or accepting the argument-inspection fragility - not attempted here.
 
+## Cold-boot endpoint absence (verified 2026-07-20, tmux 3.6b)
+
+`fm_backend_target_state` (`bin/fm-backend.sh`) is deliberately conservative: a failed endpoint probe classifies as `missing` only when the backend's own output explicitly identifies an absent target, and everything else stays `unknown` and fails closed.
+tmux has one extra confirmed-absence case beyond "can't find pane/window/session": the server itself not running.
+Every tmux session, window, and pane lives inside the server process, so when the client reports the server is not there, all recorded tmux endpoint state is confirmed gone - which is why an explicit `secondmate <harness>` launch may resume a recorded coordinator after a machine restart instead of refusing as unproven.
+
+Verified empirically with real tmux 3.6b on macOS (Darwin 25.5.0), 2026-07-20.
+The socket file being gone (ENOENT - the machine-restart case, since the socket dir under `/tmp` is wiped on reboot):
+
+```sh
+$ tmux -L fm-coldboot-probe-63616 display-message -p -t fm-nope '#{pane_id}'
+error connecting to /private/tmp/tmux-501/fm-coldboot-probe-63616 (No such file or directory)
+$ echo $?
+1
+```
+
+A stale socket file with no listening server (ECONNREFUSED - a server that died without unlinking its socket):
+
+```sh
+$ python3 -c "import socket; s=socket.socket(socket.AF_UNIX); s.bind('/private/tmp/fm-cb-64331.sock'); s.close()"
+$ TMUX= tmux -S /private/tmp/fm-cb-64331.sock display-message -p -t fm-nope '#{pane_id}'
+no server running on /private/tmp/fm-cb-64331.sock
+$ echo $?
+1
+```
+
+These two client signatures - `no server running on <socket>` and `error connecting to <socket> (No such file or directory)` - are exactly the patterns `fm_backend_target_state` classifies as `missing` for tmux.
+Any other connection error, such as `error connecting to <socket> (Permission denied)`, does not confirm the server is absent and stays `unknown`; the rule must never broaden to treat arbitrary probe failures as absence.
+
 ## Limitations
 
 None specific to tmux for the reference path itself - it is the fully verified reference backend, while Orca and cmux are the backends without secondmate support.

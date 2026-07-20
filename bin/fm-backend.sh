@@ -698,7 +698,8 @@ fm_backend_target_probe() {  # <backend> <target> [expected-label]
 # fm_backend_target_state: classify a passive endpoint probe without treating
 # an unavailable backend or query error as evidence that the endpoint is gone.
 # Prints exists, missing, or unknown. "missing" is deliberately conservative:
-# only backend output that explicitly identifies an absent target reaches it.
+# only backend output that explicitly identifies an absent target - or, for
+# tmux, an absent server - reaches it.
 fm_backend_target_state() {  # <backend> <target> [expected-label]
   local backend=$1 output
   case "$backend" in
@@ -712,8 +713,19 @@ fm_backend_target_state() {  # <backend> <target> [expected-label]
     printf 'exists'
     return 0
   fi
+  # tmux cold boot: every tmux session, window, and pane lives inside the
+  # server process, so a client message that the server itself is not there is
+  # confirmed endpoint absence, not an unproven query failure. The two client
+  # signatures - "no server running on <socket>" (stale socket, ECONNREFUSED)
+  # and "error connecting to <socket> (No such file or directory)" (socket
+  # gone, the machine-restart case) - are recorded empirically in
+  # docs/tmux-backend.md "Cold-boot endpoint absence". Any other connection
+  # error (permission denied, an unreadable socket dir, ...) stays unknown and
+  # fails closed; never broaden these patterns to arbitrary failures.
   case "$backend:$output" in
-    tmux:*"can't find pane"*|tmux:*"can't find window"*|tmux:*"can't find session"*|herdr:*"pane_not_found"*|orca:*"terminal_handle_stale"*) printf 'missing' ;;
+    tmux:*"can't find pane"*|tmux:*"can't find window"*|tmux:*"can't find session"*) printf 'missing' ;;
+    tmux:*"no server running"*|tmux:*"error connecting to"*"(No such file or directory)"*) printf 'missing' ;;
+    herdr:*"pane_not_found"*|orca:*"terminal_handle_stale"*) printf 'missing' ;;
     *) printf 'unknown' ;;
   esac
 }

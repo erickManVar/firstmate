@@ -75,6 +75,8 @@ case "${1:-}" in
         if [ "${FM_FAKE_TMUX_TARGET_EXISTS:-0}" != 1 ]; then
           case "${FM_FAKE_TMUX_TARGET_PROBE:-missing}" in
             missing) printf '%s\n' "can't find window" >&2 ;;
+            coldboot) printf '%s\n' "no server running on /private/tmp/tmux-501/default" >&2 ;;
+            coldboot-enoent) printf '%s\n' "error connecting to /private/tmp/tmux-501/default (No such file or directory)" >&2 ;;
             failure) printf '%s\n' 'tmux server query failed' >&2 ;;
           esac
           exit 1
@@ -322,6 +324,25 @@ test_endpoint_query_failure_fails_closed() {
   pass "endpoint query failures fail closed"
 }
 
+test_cold_boot_endpoint_resumes() {
+  # Machine restart: the tmux server, and with it every recorded endpoint, is
+  # gone, so both documented server-absent probe signatures are confirmed
+  # absence (docs/tmux-backend.md "Cold-boot endpoint absence") and the
+  # explicit launcher resumes the recorded coordinator instead of refusing.
+  local mode
+  for mode in coldboot coldboot-enoent; do
+    reset_state
+    "$LAUNCHER" codex --no-attach >/dev/null 2>&1 || fail "seed spawn failed"
+    : > "$FM_FAKE_SPAWN_LOG"
+    : > "$FM_FAKE_TMUX_LOG"
+    export FM_FAKE_TMUX_TARGET_EXISTS=0 FM_FAKE_TMUX_TARGET_PROBE=$mode
+    out=$("$LAUNCHER" codex --no-attach 2>&1) || fail "cold-boot resume ($mode) failed: $out"
+    assert_grep "spawn:alpha-sm --secondmate --harness codex --backend tmux" "$FM_FAKE_SPAWN_LOG" "cold-boot absence ($mode) resumes on the recorded backend"
+    assert_no_grep "kill-window" "$FM_FAKE_TMUX_LOG" "nothing exists to kill after a cold boot ($mode)"
+  done
+  pass "a cold tmux boot resumes the recorded coordinator instead of failing closed"
+}
+
 test_meta_home_disagreement_fails_closed() {
   reset_state
   fm_write_secondmate_meta "$HOME_DIR/state/alpha-sm.meta" "$TMP/elsewhere" "firstmate:fm-alpha-sm"
@@ -538,6 +559,7 @@ test_version_named_live_agent_attaches
 test_dead_endpoint_is_killed_and_respawned
 test_unproven_liveness_fails_closed
 test_endpoint_query_failure_fails_closed
+test_cold_boot_endpoint_resumes
 test_meta_home_disagreement_fails_closed
 test_non_secondmate_metadata_fails_closed
 test_missing_meta_home_fails_closed
