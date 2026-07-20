@@ -301,7 +301,7 @@ An absent or incompatible `tasks-axi` reports `MISSING: tasks-axi (install: npm 
 An absent `quota-axi` reports `MISSING: quota-axi (install: npm install -g quota-axi)`; `bin/fm-dispatch-select.sh` still degrades to the first profile at runtime when quota data is unavailable.
 Bootstrap also reports a `TANGLE:` line when `FM_ROOT` is on a named non-default branch; follow the printed checkout remediation rather than treating it as an installable tool problem.
 In a read-only session that did not get the fleet lock, the same line is advisory and omits the checkout command.
-The locked session-start bootstrap step also runs a best-effort project clone refresh through `fm-fleet-sync.sh`.
+The locked session-start bootstrap step also runs a best-effort project clone refresh through `fm-fleet-sync.sh` in the primary home only; a home marked `.fm-secondmate-home` skips the startup refresh and delegates canonical clone synchronization to the primary.
 It emits `FLEET_SYNC:` for skipped refreshes that may matter, recovered self-heals, and `STUCK:` alarms.
 Normal completed runs keep local-only and no-origin skips silent.
 If bootstrap kills a timed-out refresh, it replays any completed `fm-fleet-sync.sh` output before the aggregate timeout skip so no finished result is lost.
@@ -311,7 +311,7 @@ It never removes a live lock, leaves any other failure shape untouched, and prin
 The locked session-start bootstrap step never synchronizes, nudges, kills, or resumes a project coordinator.
 It emits `SECONDMATE_LIVENESS:` only for stopped or unproven recorded endpoints, which require explicit project-local inspection or `secondmate <harness>`.
 For a mid-session inherited config edit where tracked-file sync and reread nudges are not needed, run `bin/fm-config-push.sh`.
-It uses the same live secondmate discovery and propagation helper as bootstrap, prints each live home's `crew-dispatch.json`, `crew-harness`, `backlog-backend`, and `projects-root` result as `pushed`, `unchanged`, `skipped`, or `error`, and exits non-zero only for real propagation errors.
+It uses the same live secondmate discovery and propagation helper as the explicit secondmate launch, prints each live home's `crew-dispatch.json`, `crew-harness`, `backlog-backend`, and `projects-root` result as `pushed`, `unchanged`, `skipped`, or `error`, and exits non-zero only for real propagation errors.
 That live discovery starts from `state/*.meta` records with `kind=secondmate`; `data/secondmates.md` only backfills `home=` for older or incomplete meta records.
 Skipped items, such as a destination checkout that does not yet gitignore the item, are visible warnings but not hard failures.
 
