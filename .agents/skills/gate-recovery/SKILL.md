@@ -22,6 +22,13 @@ If the branch is detached, the worktree is missing, or its relationship to the g
 Record the gate's run id, branch, commit, current phase, and next action before recovery begins.
 Keep that record in the active task status or brief so the recovering operator can reconcile the same gate rather than a similarly named run.
 
+## Auto-fix worktrees are evidence-only
+
+The pipeline's own auto-fix worktrees are validation evidence, never a delivery source.
+Never treat an auto-fix worktree's contents, commits, or SHA as the deliverable, never report ready from one, and never promote one into a branch, PR, or merge.
+The only deliverable source is a committed real task branch in the task's own worktree.
+If fix work exists only in an auto-fix worktree and not as commits on the task branch, the gate is not done; report that state to the captain instead of promoting the worktree.
+
 ## Inspect before acting
 
 Use read-only status, log, and process inspection first.
@@ -41,4 +48,6 @@ After approval, apply only the approved action and re-check the same recorded ru
 ## Completion
 
 Recovery is complete only when checks have passed and the PR URL is available.
-Report both together with the final run id, branch, and commit.
+Before reporting ready, independently verify the deliverable with read-only Git and PR inspection, never from the run's own summary alone: read the task branch's commit SHA, and when a PR exists, read its head SHA and confirm the two match.
+A mismatch means what was validated is not what would ship - stop and report the discrepancy instead of ready.
+Report checks and the PR URL together with the final run id, branch, and verified commit.
