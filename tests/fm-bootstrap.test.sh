@@ -694,14 +694,14 @@ SH
 }
 
 test_secondmate_bootstrap_skips_fleet_sync() {
-  local case_dir home fake_root fakebin marker out
+  local case_dir home fake_root fakebin marker out role
   case_dir="$TMP_ROOT/secondmate-no-fleet-sync"
   home="$case_dir/home"
   fake_root="$case_dir/fake-root"
   marker="$case_dir/fleet-sync-ran"
   mkdir -p "$home/config" "$home/projects" "$fake_root/bin"
   printf '%s\n' manual > "$home/config/backlog-backend"
-  printf '%s\n' secondmate > "$home/config/home-role"
+  printf '%s\n' secondmate > "$home/.fm-secondmate-home"
   cat > "$fake_root/bin/fm-fleet-sync.sh" <<SH
 #!/usr/bin/env bash
 : > "$marker"
@@ -709,12 +709,20 @@ SH
   chmod +x "$fake_root/bin/fm-fleet-sync.sh"
   fakebin=$(make_fake_toolchain "$case_dir")
 
-  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$fake_root" \
-    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+  for role in absent malformed primary; do
+    rm -f "$home/config/home-role" "$marker"
+    case "$role" in
+      malformed) printf '%s\n' 'secondmate extra' > "$home/config/home-role" ;;
+      primary) printf '%s\n' primary > "$home/config/home-role" ;;
+    esac
 
-  [ ! -e "$marker" ] || fail "secondmate bootstrap ran fleet sync"
-  assert_not_contains "$out" 'FLEET_SYNC:' "secondmate bootstrap reported fleet sync"
-  pass "secondmate bootstrap skips fleet sync"
+    out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$fake_root" \
+      FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+
+    [ ! -e "$marker" ] || fail "marked secondmate bootstrap ran fleet sync with $role home-role"
+    assert_not_contains "$out" 'FLEET_SYNC:' "marked secondmate bootstrap reported fleet sync with $role home-role"
+  done
+  pass "marked secondmate bootstrap skips fleet sync regardless of home-role"
 }
 
 test_crew_dispatch_active_rules_are_surfaced() {
