@@ -511,6 +511,25 @@ test_target_ready_fails_when_target_absent() {
   pass "fm_backend_cmux_target_ready: fails when the workspace/surface is not found (list-panes structural check)"
 }
 
+test_target_state_classifies_confirmed_absence_and_query_failure() {
+  local dir fb out target
+  dir="$TMP_ROOT/target-state-missing"; mkdir -p "$dir/responses"
+  target="aaaaaaaa-0000-0000-0000-000000000000:bbbbbbbb-1111-1111-1111-111111111111"
+  cmux_workspace_list_response "$dir" 1 "cccccccc-2222-2222-2222-222222222222" "unrelated"
+  fb=$(make_cmux_fakebin "$dir")
+  out=$( PATH="$fb:$PATH" FM_CMUX_LOG="$dir/log" FM_CMUX_RESPONSES="$dir/responses" \
+    bash -c '. "$0/bin/fm-backend.sh"; fm_backend_target_state cmux "$1"' "$ROOT" "$target" )
+  [ "$out" = missing ] || fail "an absent cmux workspace in a valid list should classify as missing, got '$out'"
+
+  dir="$TMP_ROOT/target-state-malformed"; mkdir -p "$dir/responses"
+  printf 'not json\n' > "$dir/responses/1.out"
+  fb=$(make_cmux_fakebin "$dir")
+  out=$( PATH="$fb:$PATH" FM_CMUX_LOG="$dir/log" FM_CMUX_RESPONSES="$dir/responses" \
+    bash -c '. "$0/bin/fm-backend.sh"; fm_backend_target_state cmux "$1"' "$ROOT" "$target" )
+  [ "$out" = unknown ] || fail "an unreadable cmux workspace query should classify as unknown, got '$out'"
+  pass "fm_backend_target_state: cmux distinguishes confirmed absence from query failure"
+}
+
 test_target_ready_checks_expected_label() {
   local dir fb title
   dir="$TMP_ROOT/ready-label-ok"; mkdir -p "$dir/responses"
@@ -1034,6 +1053,7 @@ test_ensure_running_fails_fast_on_unauth_without_launching
 test_create_task_refuses_duplicate_label
 test_create_task_creates_and_parses_ids
 test_target_ready_fails_when_target_absent
+test_target_state_classifies_confirmed_absence_and_query_failure
 test_target_ready_checks_expected_label
 test_target_ready_rejects_label_mismatch
 test_capture_trims_locally

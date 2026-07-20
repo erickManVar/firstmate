@@ -700,13 +700,20 @@ fm_backend_target_probe() {  # <backend> <target> [expected-label]
 # Prints exists, missing, or unknown. "missing" is deliberately conservative:
 # only backend output that explicitly identifies an absent target reaches it.
 fm_backend_target_state() {  # <backend> <target> [expected-label]
-  local output
+  local backend=$1 output
+  case "$backend" in
+    zellij|cmux)
+      fm_backend_source "$backend" || { printf 'unknown'; return 0; }
+      "fm_backend_${backend}_target_state" "$2" "${3:-}"
+      return 0
+      ;;
+  esac
   if output=$(fm_backend_target_probe "$@" 2>&1); then
     printf 'exists'
     return 0
   fi
   case "$output" in
-    *"can't find "*|*"not found"*|*"No such"*|*"no such"*|*"does not exist"*) printf 'missing' ;;
+    *"can't find "*|*"not found"*|*"No such"*|*"no such"*|*"does not exist"*|*"pane_not_found"*|*"terminal_handle_stale"*) printf 'missing' ;;
     *) printf 'unknown' ;;
   esac
 }

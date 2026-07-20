@@ -173,6 +173,20 @@ test_agent_alive_dispatcher_routes_and_falls_back() {
   pass "fm_backend_agent_alive: routes tmux/herdr correctly, unknown for an unverified backend"
 }
 
+test_target_state_recognizes_herdr_pane_not_found() {
+  local out
+  out=$(bash -c '. "$0/bin/fm-backend.sh"; fm_backend_target_probe() { printf "{\\\"error\\\":{\\\"code\\\":\\\"pane_not_found\\\"}}\\n" >&2; return 1; }; fm_backend_target_state herdr default:w1:p2' "$ROOT")
+  [ "$out" = missing ] || fail "a Herdr pane_not_found response should classify as missing, got '$out'"
+  pass "fm_backend_target_state: recognizes Herdr pane_not_found as confirmed absence"
+}
+
+test_target_state_recognizes_orca_stale_terminal() {
+  local out
+  out=$(bash -c '. "$0/bin/fm-backend.sh"; fm_backend_target_probe() { printf "{\\\"error\\\":{\\\"code\\\":\\\"terminal_handle_stale\\\"}}\\n" >&2; return 1; }; fm_backend_target_state orca term-gone' "$ROOT")
+  [ "$out" = missing ] || fail "an Orca terminal_handle_stale response should classify as missing, got '$out'"
+  pass "fm_backend_target_state: recognizes Orca terminal_handle_stale as confirmed absence"
+}
+
 # --- sweep level: bin/fm-bootstrap.sh's secondmate_liveness_sweep -----------
 
 # make_toolchain <dir>: the fixed set of stubs bin/fm-bootstrap.sh's read-only
@@ -460,6 +474,8 @@ test_sweep_noop_with_no_secondmate_meta() {
 test_tmux_agent_alive_classifies
 test_herdr_agent_alive_maps_pane_agent_state
 test_agent_alive_dispatcher_routes_and_falls_back
+test_target_state_recognizes_herdr_pane_not_found
+test_target_state_recognizes_orca_stale_terminal
 test_sweep_reports_confirmed_dead_secondmate_without_mutation
 test_sweep_reports_secondmate_without_window_as_stopped
 test_sweep_reports_missing_endpoint_as_stopped
