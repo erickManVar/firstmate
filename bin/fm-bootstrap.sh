@@ -206,6 +206,10 @@ secondmate_liveness_sweep() {
     backend=$(fm_backend_of_meta "$meta")
     target=$(fm_backend_target_of_meta "$meta")
     [ -n "$target" ] || target="$window"
+    if ! fm_backend_target_exists "$backend" "$target" "fm-$id"; then
+      echo "SECONDMATE_LIVENESS: secondmate $id: stopped"
+      continue
+    fi
     verdict=$(fm_backend_agent_alive "$backend" "$target" 2>/dev/null) || verdict="unknown"
     case "$verdict" in
       dead)
