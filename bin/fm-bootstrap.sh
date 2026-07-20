@@ -553,6 +553,8 @@ fi
 secondmate_liveness_sweep
 if [ "${FM_BOOTSTRAP_DETECT_ONLY:-0}" != 1 ]; then
   x_mode_setup
-  fleet_sync
+  if [ "$(fm_projects_home_role 2>/dev/null || true)" != secondmate ]; then
+    fleet_sync
+  fi
 fi
 exit 0

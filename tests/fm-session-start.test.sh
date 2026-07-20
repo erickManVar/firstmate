@@ -519,6 +519,30 @@ EOF
   pass "herdr endpoint liveness is reported per task: alive for a live pane, dead for a gone one"
 }
 
+test_endpoint_liveness_unknown() {
+  local rec root home fakebin out
+  rec=$(new_world liveness-unknown)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  cat > "$fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' 'tmux: command not found' >&2
+exit 1
+SH
+  chmod +x "$fakebin/tmux"
+
+  printf 'window=fm-sess:unknown-window\nkind=ship\n' > "$home/state/task-unknown.meta"
+
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  assert_contains "$out" "endpoint: unknown (backend=tmux window=fm-sess:unknown-window)" "unproven tmux endpoint was not reported unknown"
+  assert_not_contains "$out" "endpoint: dead (backend=tmux window=fm-sess:unknown-window)" "unproven tmux endpoint was reported dead"
+
+  pass "session digest preserves unknown endpoint probes"
+}
+
 # --- composition: real scripts run, not reimplemented ------------------------
 
 test_composition_invokes_real_scripts() {
@@ -744,6 +768,7 @@ test_status_tail_bounding
 test_orphan_status_logs_are_printed
 test_endpoint_liveness_tmux
 test_endpoint_liveness_herdr
+test_endpoint_liveness_unknown
 test_composition_invokes_real_scripts
 test_fleet_digest_empty_fleet
 test_next_step_sources_x_mode_cadence
