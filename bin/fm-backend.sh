@@ -712,8 +712,8 @@ fm_backend_target_state() {  # <backend> <target> [expected-label]
     printf 'exists'
     return 0
   fi
-  case "$output" in
-    *"can't find "*|*"not found"*|*"No such"*|*"no such"*|*"does not exist"*|*"pane_not_found"*|*"terminal_handle_stale"*) printf 'missing' ;;
+  case "$backend:$output" in
+    tmux:*"can't find pane"*|tmux:*"can't find window"*|tmux:*"can't find session"*|herdr:*"pane_not_found"*|orca:*"terminal_handle_stale"*) printf 'missing' ;;
     *) printf 'unknown' ;;
   esac
 }

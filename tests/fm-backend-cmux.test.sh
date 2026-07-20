@@ -512,7 +512,7 @@ test_target_ready_fails_when_target_absent() {
 }
 
 test_target_state_classifies_confirmed_absence_and_query_failure() {
-  local dir fb out target
+  local dir fb out target title
   dir="$TMP_ROOT/target-state-missing"; mkdir -p "$dir/responses"
   target="aaaaaaaa-0000-0000-0000-000000000000:bbbbbbbb-1111-1111-1111-111111111111"
   cmux_workspace_list_response "$dir" 1 "cccccccc-2222-2222-2222-222222222222" "unrelated"
@@ -527,6 +527,15 @@ test_target_state_classifies_confirmed_absence_and_query_failure() {
   out=$( PATH="$fb:$PATH" FM_CMUX_LOG="$dir/log" FM_CMUX_RESPONSES="$dir/responses" \
     bash -c '. "$0/bin/fm-backend.sh"; fm_backend_target_state cmux "$1"' "$ROOT" "$target" )
   [ "$out" = unknown ] || fail "an unreadable cmux workspace query should classify as unknown, got '$out'"
+
+  dir="$TMP_ROOT/target-state-recovered-label"; mkdir -p "$dir/responses"
+  title=$(cmux_expected_scoped_title fm-label)
+  cmux_workspace_list_response "$dir" 1 "cccccccc-2222-2222-2222-222222222222" "$title"
+  cmux_panes_response "$dir" 2 "dddddddd-3333-3333-3333-333333333333"
+  fb=$(make_cmux_fakebin "$dir")
+  out=$( PATH="$fb:$PATH" FM_CMUX_LOG="$dir/log" FM_CMUX_RESPONSES="$dir/responses" \
+    bash -c '. "$0/bin/fm-backend.sh"; fm_backend_target_state cmux "$1" fm-label' "$ROOT" "$target" )
+  [ "$out" = exists ] || fail "a relaunch-replaced cmux workspace with the expected label should classify as exists, got '$out'"
   pass "fm_backend_target_state: cmux distinguishes confirmed absence from query failure"
 }
 

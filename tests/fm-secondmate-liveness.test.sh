@@ -187,6 +187,13 @@ test_target_state_recognizes_orca_stale_terminal() {
   pass "fm_backend_target_state: recognizes Orca terminal_handle_stale as confirmed absence"
 }
 
+test_target_state_leaves_backend_failures_unproven() {
+  local out
+  out=$(bash -c '. "$0/bin/fm-backend.sh"; fm_backend_target_probe() { printf "tmux: command not found\\n" >&2; return 1; }; fm_backend_target_state tmux sess:win' "$ROOT")
+  [ "$out" = unknown ] || fail "a missing tmux command should stay unknown, got '$out'"
+  pass "fm_backend_target_state: leaves backend failures unproven"
+}
+
 # --- sweep level: bin/fm-bootstrap.sh's secondmate_liveness_sweep -----------
 
 # make_toolchain <dir>: the fixed set of stubs bin/fm-bootstrap.sh's read-only
@@ -476,6 +483,7 @@ test_herdr_agent_alive_maps_pane_agent_state
 test_agent_alive_dispatcher_routes_and_falls_back
 test_target_state_recognizes_herdr_pane_not_found
 test_target_state_recognizes_orca_stale_terminal
+test_target_state_leaves_backend_failures_unproven
 test_sweep_reports_confirmed_dead_secondmate_without_mutation
 test_sweep_reports_secondmate_without_window_as_stopped
 test_sweep_reports_missing_endpoint_as_stopped
