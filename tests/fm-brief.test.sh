@@ -258,6 +258,12 @@ test_secondmate_no_projects_charter() {
     "project-less charter operating model lost the pooled-worktree note"
   assert_no_grep "The projects above are local clones" "$brief" \
     "project-less charter kept the with-projects operating-model line"
+  assert_grep "Follow the execution-visibility policy in your local" "$brief" \
+    "project-less charter did not inherit the main execution-visibility policy"
+  assert_grep "captain explicitly assigns within the registered project scope" "$brief" \
+    "secondmate charter did not authorize direct captain work within scope"
+  assert_grep "main firstmate owns cross-project, fleet-wide, and shared Firstmate work" "$brief" \
+    "secondmate charter did not reserve cross-project and fleet work for Firstmate"
   if grep -nE '^-[[:space:]]*$' "$brief" >/dev/null; then
     fail "project-less charter left a stray empty project bullet"
   fi

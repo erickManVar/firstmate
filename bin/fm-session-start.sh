@@ -26,10 +26,9 @@
 #
 #   1. lock          - acquire the per-home session lock FIRST, before any
 #                       mutating step runs.
-#   2. bootstrap      - detect-only diagnostics always run. The four
-#                       MUTATING sweeps (secondmate fast-forward, secondmate
-#                       liveness, X-mode artifact writes, fleet sync) run only
-#                       when this session actually holds the lock.
+#   2. bootstrap      - detect-only diagnostics always run. X-mode artifact
+#                       writes and primary-home fleet sync run only when this
+#                       session actually holds the lock.
 #   3. wake-drain     - mutates the durable wake queue, so it also only runs
 #                       when locked.
 #   4. context digest - data/projects.md, data/secondmates.md, data/captain.md,
@@ -60,7 +59,7 @@
 # tasks-axi and quota-axi tool checks, and tasks-axi availability - none of
 # which mutate shared state and all of which are safe to compute from a second
 # session.
-# Only the four mutating sweeps and the wake-queue drain are skipped.
+# Only the mutating sweeps and the wake-queue drain are skipped.
 # The context and fleet-state digests
 # below are always read-only, so they run unconditionally in both modes.
 #
@@ -154,7 +153,7 @@ if [ "$LOCK_RC" -ne 0 ]; then
     printf '%s\n' "$BAR"
     printf '●  READ-ONLY SESSION - ANOTHER LIVE FIRSTMATE SESSION HOLDS THE FLEET LOCK\n'
     printf '●  %s\n' "$LOCK_OUT"
-    printf '●  Skipping every mutating step: secondmate sync, X-mode artifacts,\n'
+    printf '●  Skipping every mutating step: X-mode artifacts,\n'
     printf '●  fleet sync, and wake-queue drain. Detect-only bootstrap diagnostics and\n'
     printf '●  the rest of this read-only-safe digest still ran below.\n'
     printf '●  Operate read-only until this resolves - do not spawn, steer, merge, or\n'
@@ -249,11 +248,12 @@ for meta in "$STATE"/*.meta; do
   target=$(fm_backend_target_of_meta "$meta")
   if [ -n "$window" ]; then
     backend=$(fm_backend_of_meta "$meta")
-    if fm_backend_target_exists "$backend" "${target:-$window}" "fm-$id"; then
-      printf 'endpoint: alive (backend=%s window=%s)\n' "$backend" "$window"
-    else
-      printf 'endpoint: dead (backend=%s window=%s)\n' "$backend" "$window"
-    fi
+    endpoint_state=$(fm_backend_target_state "$backend" "${target:-$window}" "fm-$id")
+    case "$endpoint_state" in
+      exists) printf 'endpoint: alive (backend=%s window=%s)\n' "$backend" "$window" ;;
+      missing) printf 'endpoint: dead (backend=%s window=%s)\n' "$backend" "$window" ;;
+      *) printf 'endpoint: unknown (backend=%s window=%s)\n' "$backend" "$window" ;;
+    esac
   else
     printf 'endpoint: unknown (no window recorded)\n'
   fi

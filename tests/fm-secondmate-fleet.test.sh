@@ -7,6 +7,7 @@ set -u
 
 FLEET="$ROOT/bin/fm-secondmate-fleet.sh"
 TMP=$(fm_test_tmproot fm-secondmate-fleet)
+BASE_PATH=${FM_TEST_BASE_PATH:-/usr/bin:/bin:/usr/sbin:/sbin}
 STUB="$TMP/stubroot"
 HOME_DIR="$TMP/primary"
 SM_HOME="$TMP/projects/alpha/.secondmate"
@@ -35,5 +36,80 @@ export FM_STATE_OVERRIDE="$HOME_DIR/state"
 out=$("$FLEET" status 2>&1) || fail "status should report metadata mismatch without failing: $out"
 assert_contains "$out" "alpha-sm: metadata mismatch" "fleet status must reject a non-secondmate metadata record"
 pass "fleet status validates secondmate metadata identity"
+
+FAKEBIN="$TMP/fakebin"
+mkdir -p "$FAKEBIN"
+cat > "$FAKEBIN/tmux" <<'SH'
+#!/usr/bin/env bash
+case "${1:-}" in
+  display-message)
+    for arg in "$@"; do
+      case "$arg" in
+        *pane_id*) printf '%s\n' "can't find window" >&2; exit 1 ;;
+        *pane_current_command*) exit 99 ;;
+      esac
+    done
+    ;;
+esac
+exit 0
+SH
+chmod +x "$FAKEBIN/tmux"
+
+{
+  echo "window=firstmate:fm-alpha-sm"
+  echo "kind=secondmate"
+  echo "home=$SM_HOME"
+} > "$HOME_DIR/state/alpha-sm.meta"
+
+out=$(PATH="$FAKEBIN:$BASE_PATH" "$FLEET" status 2>&1) || fail "status should report a missing endpoint without failing: $out"
+assert_contains "$out" "alpha-sm: stopped (recover from the project container with: secondmate <harness>)" \
+  "fleet status must classify a missing endpoint as stopped"
+pass "fleet status reports a missing endpoint as stopped"
+
+cat > "$FAKEBIN/tmux" <<'SH'
+#!/usr/bin/env bash
+case "${1:-}" in
+  display-message)
+    for arg in "$@"; do
+      case "$arg" in
+        *pane_id*) printf '%s\n' 'tmux server query failed' >&2; exit 1 ;;
+        *pane_current_command*) exit 99 ;;
+      esac
+    done
+    ;;
+esac
+exit 0
+SH
+chmod +x "$FAKEBIN/tmux"
+
+out=$(PATH="$FAKEBIN:$BASE_PATH" "$FLEET" status 2>&1) || fail "status should report an unproven endpoint without failing: $out"
+assert_contains "$out" "alpha-sm: unknown (backend: tmux; inspect before recovery)" \
+  "fleet status must classify a query failure as unknown"
+pass "fleet status reports an endpoint query failure as unknown"
+
+# Cold tmux boot: a server-absent probe signature is confirmed absence
+# (docs/tmux-backend.md "Cold-boot endpoint absence"), so status reports the
+# coordinator as stopped - still report-only, recovery stays with the explicit
+# project-local launcher.
+cat > "$FAKEBIN/tmux" <<'SH'
+#!/usr/bin/env bash
+case "${1:-}" in
+  display-message)
+    for arg in "$@"; do
+      case "$arg" in
+        *pane_id*) printf '%s\n' 'no server running on /private/tmp/tmux-501/default' >&2; exit 1 ;;
+        *pane_current_command*) exit 99 ;;
+      esac
+    done
+    ;;
+esac
+exit 0
+SH
+chmod +x "$FAKEBIN/tmux"
+
+out=$(PATH="$FAKEBIN:$BASE_PATH" "$FLEET" status 2>&1) || fail "status should report a cold-boot-absent endpoint without failing: $out"
+assert_contains "$out" "alpha-sm: stopped (recover from the project container with: secondmate <harness>)" \
+  "fleet status must classify a cold tmux boot as stopped"
+pass "fleet status reports a cold tmux boot as stopped, still report-only"
 
 echo "fm-secondmate-fleet: all tests passed"

@@ -431,6 +431,57 @@ fm_backend_cmux_target_ready() {  # <target> [expected-label]
   fm_backend_cmux_surface_exists "$FM_BACKEND_CMUX_WORKSPACE" "$FM_BACKEND_CMUX_SURFACE"
 }
 
+fm_backend_cmux_target_state() {  # <target> [expected-label] -> exists|missing|unknown
+  local target=$1 expected_label=${2:-} expected_title workspaces panes title wsid sfid
+  fm_backend_cmux_parse_target "$target" || { printf 'unknown'; return 0; }
+  if ! workspaces=$(fm_backend_cmux_cli workspace list --json --id-format uuids 2>&1); then
+    printf 'unknown'
+    return 0
+  fi
+  if ! printf '%s' "$workspaces" | jq -e '(.workspaces | type) == "array"' >/dev/null 2>&1; then
+    printf 'unknown'
+    return 0
+  fi
+  if [ -n "$expected_label" ]; then
+    expected_title=$(fm_backend_cmux_scoped_title "$expected_label")
+  fi
+  title=$(printf '%s' "$workspaces" | jq -r --arg id "$FM_BACKEND_CMUX_WORKSPACE" \
+    '.workspaces[]? | select(.id == $id) | .title' 2>/dev/null | head -1)
+  if [ -z "$title" ]; then
+    [ -n "$expected_label" ] || { printf 'missing'; return 0; }
+    wsid=$(printf '%s' "$workspaces" | jq -r --arg title "$expected_title" \
+      '.workspaces[]? | select(.title == $title) | .id' 2>/dev/null | head -1)
+    [ -n "$wsid" ] || { printf 'missing'; return 0; }
+    FM_BACKEND_CMUX_WORKSPACE=$wsid
+    title=$expected_title
+  fi
+  if [ -n "$expected_label" ]; then
+    if [ "$title" != "$expected_title" ]; then
+      printf 'unknown'
+      return 0
+    fi
+  fi
+  if ! panes=$(fm_backend_cmux_cli list-panes --workspace "$FM_BACKEND_CMUX_WORKSPACE" --json --id-format uuids 2>&1); then
+    printf 'unknown'
+    return 0
+  fi
+  if ! printf '%s' "$panes" | jq -e '(.panes | type) == "array"' >/dev/null 2>&1; then
+    printf 'unknown'
+    return 0
+  fi
+  if [ -n "$expected_label" ]; then
+    sfid=$(printf '%s' "$panes" | jq -r '.panes[0] // {} | .selected_surface_id // (.surface_ids[0] // empty)' 2>/dev/null)
+    [ -n "$sfid" ] || { printf 'missing'; return 0; }
+    FM_BACKEND_CMUX_SURFACE=$sfid
+  fi
+  if ! printf '%s' "$panes" | jq -e --arg s "$FM_BACKEND_CMUX_SURFACE" \
+    '[.panes[]? | select(.surface_ids // [] | index($s))] | length > 0' >/dev/null 2>&1; then
+    printf 'missing'
+    return 0
+  fi
+  printf 'exists'
+}
+
 # fm_backend_cmux_current_path: the live foreground process's cwd, or empty on
 # any error. Mirrors fm_backend_zellij_current_path's active pwd-marker-probe
 # workaround (bin/backends/zellij.sh:306-347) verbatim in spirit.

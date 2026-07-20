@@ -2,15 +2,14 @@
 # tests/fm-secondmate-liveness.test.sh - the session-start secondmate LIVENESS
 # guarantee: bin/fm-backend.sh's fm_backend_agent_alive probe (dispatching to
 # fm_backend_tmux_agent_alive / fm_backend_herdr_agent_alive) and
-# bin/fm-bootstrap.sh's secondmate_liveness_sweep() that acts on it.
+# bin/fm-bootstrap.sh's report-only secondmate_liveness_sweep().
 #
 # The gap under test (AGENTS.md "Session start"; evidence 2026-07-07): a
 # secondmate agent that has exited leaves its backend endpoint alive as a bare
 # shell. fm_backend_target_exists only checks pane PRESENCE, so it reports
-# that shell "alive"; recovery only respawns endpoints reported dead, and the
-# watcher deliberately exempts secondmates from stale-pane detection (an idle
-# secondmate pane is healthy by design). A dead-shell secondmate was therefore
-# invisible to every existing check and sat dead indefinitely.
+# that shell "alive"; the watcher deliberately exempts secondmates from
+# stale-pane detection because an idle secondmate pane is healthy by design.
+# A dead-shell secondmate was therefore invisible to every existing check.
 #
 # The guarantees under test:
 #   - fm_backend_tmux_agent_alive classifies a verified-harness foreground
@@ -21,16 +20,10 @@
 #     live -> alive, unknown -> unknown.
 #   - fm_backend_agent_alive routes to the right per-backend classifier and
 #     reports unknown for a backend with no verified classifier (never errors).
-#   - bin/fm-bootstrap.sh's secondmate_liveness_sweep respawns a confidently
-#     DEAD secondmate (killing the stale endpoint first, since the tmux
-#     adapter refuses to create a same-named window over a live one), leaves
-#     an ALIVE one untouched, and never acts on an inconclusive (UNKNOWN)
-#     reading.
-#   - The sweep converges: once a secondmate reads alive, a later run never
-#     re-touches it (idempotent by construction, not by remembering what it
-#     already did).
-#   - The sweep is skipped entirely under FM_BOOTSTRAP_DETECT_ONLY=1 (the
-#     read-only session path), matching the other mutating sweeps.
+#   - bin/fm-bootstrap.sh's secondmate_liveness_sweep reports a confidently
+#     DEAD secondmate as stopped, leaves an ALIVE one quiet, and reports an
+#     inconclusive (UNKNOWN) reading as unproven without acting on either.
+#   - The report runs under FM_BOOTSTRAP_DETECT_ONLY=1 because it is read-only.
 #   - The sweep is naturally scoped to the primary: with no kind=secondmate
 #     meta present (a secondmate's own state/ never holds one, since
 #     secondmates never spawn secondmates), it is a silent no-op.
@@ -180,6 +173,49 @@ test_agent_alive_dispatcher_routes_and_falls_back() {
   pass "fm_backend_agent_alive: routes tmux/herdr correctly, unknown for an unverified backend"
 }
 
+test_target_state_recognizes_herdr_pane_not_found() {
+  local out
+  out=$(bash -c '. "$0/bin/fm-backend.sh"; fm_backend_target_probe() { printf "{\\\"error\\\":{\\\"code\\\":\\\"pane_not_found\\\"}}\\n" >&2; return 1; }; fm_backend_target_state herdr default:w1:p2' "$ROOT")
+  [ "$out" = missing ] || fail "a Herdr pane_not_found response should classify as missing, got '$out'"
+  pass "fm_backend_target_state: recognizes Herdr pane_not_found as confirmed absence"
+}
+
+test_target_state_recognizes_orca_stale_terminal() {
+  local out
+  out=$(bash -c '. "$0/bin/fm-backend.sh"; fm_backend_target_probe() { printf "{\\\"error\\\":{\\\"code\\\":\\\"terminal_handle_stale\\\"}}\\n" >&2; return 1; }; fm_backend_target_state orca term-gone' "$ROOT")
+  [ "$out" = missing ] || fail "an Orca terminal_handle_stale response should classify as missing, got '$out'"
+  pass "fm_backend_target_state: recognizes Orca terminal_handle_stale as confirmed absence"
+}
+
+test_target_state_leaves_backend_failures_unproven() {
+  local out
+  out=$(bash -c '. "$0/bin/fm-backend.sh"; fm_backend_target_probe() { printf "tmux: command not found\\n" >&2; return 1; }; fm_backend_target_state tmux sess:win' "$ROOT")
+  [ "$out" = unknown ] || fail "a missing tmux command should stay unknown, got '$out'"
+  pass "fm_backend_target_state: leaves backend failures unproven"
+}
+
+# Cold tmux boot: all tmux endpoint state lives in the server process, so both
+# documented server-absent client signatures (docs/tmux-backend.md "Cold-boot
+# endpoint absence") are confirmed absence, while any other connection error
+# stays unknown and fails closed.
+test_target_state_recognizes_tmux_cold_boot_as_absence() {
+  local out
+  out=$(bash -c '. "$0/bin/fm-backend.sh"; fm_backend_target_probe() { printf "no server running on /private/tmp/tmux-501/default\\n" >&2; return 1; }; fm_backend_target_state tmux sess:win' "$ROOT")
+  [ "$out" = missing ] || fail "a no-server-running tmux probe should classify as missing, got '$out'"
+
+  out=$(bash -c '. "$0/bin/fm-backend.sh"; fm_backend_target_probe() { printf "error connecting to /private/tmp/tmux-501/default (No such file or directory)\\n" >&2; return 1; }; fm_backend_target_state tmux sess:win' "$ROOT")
+  [ "$out" = missing ] || fail "a gone-socket tmux connection error should classify as missing, got '$out'"
+
+  pass "fm_backend_target_state: recognizes both tmux server-absent signatures as confirmed absence"
+}
+
+test_target_state_leaves_other_tmux_connection_errors_unproven() {
+  local out
+  out=$(bash -c '. "$0/bin/fm-backend.sh"; fm_backend_target_probe() { printf "error connecting to /private/tmp/tmux-501/default (Permission denied)\\n" >&2; return 1; }; fm_backend_target_state tmux sess:win' "$ROOT")
+  [ "$out" = unknown ] || fail "a permission-denied tmux connection error must stay unknown, got '$out'"
+  pass "fm_backend_target_state: a non-absence tmux connection error still fails closed"
+}
+
 # --- sweep level: bin/fm-bootstrap.sh's secondmate_liveness_sweep -----------
 
 # make_toolchain <dir>: the fixed set of stubs bin/fm-bootstrap.sh's read-only
@@ -226,7 +262,22 @@ make_liveness_tmux() {
 set -u
 case "${1:-}" in
   display-message)
-    for a in "$@"; do case "$a" in *pane_current_command*) printf '%s\n' "${FM_TEST_PANE_CMD:-zsh}"; exit 0 ;; esac; done
+    for a in "$@"; do
+      case "$a" in
+        *pane_id*)
+          if [ "${FM_TEST_TARGET_EXISTS:-1}" != 1 ]; then
+            case "${FM_TEST_TARGET_PROBE:-missing}" in
+              missing) printf '%s\n' "can't find window" >&2 ;;
+              failure) printf '%s\n' 'tmux server query failed' >&2 ;;
+            esac
+            exit 1
+          fi
+          printf '%s\n' '$$'
+          exit 0
+          ;;
+        *pane_current_command*) printf '%s\n' "${FM_TEST_PANE_CMD:-zsh}"; exit 0 ;;
+      esac
+    done
     exit 0 ;;
   new-window|kill-window)
     printf '%s\n' "$*" >> "${FM_TMUX_CALL_LOG:?}"
@@ -283,7 +334,7 @@ run_bootstrap() {  # <fakebin> <home> <pane-cmd> <call-log> [extra env...] -> st
     env "$@" "$ROOT/bin/fm-bootstrap.sh" 2>&1
 }
 
-test_sweep_respawns_confirmed_dead_secondmate() {
+test_sweep_reports_confirmed_dead_secondmate_without_mutation() {
   local w fb tmuxfb log out
   w=$(new_world sweep-dead)
   add_sm_home "$w" sm1 firstmate:fm-sm1
@@ -292,13 +343,57 @@ test_sweep_respawns_confirmed_dead_secondmate() {
 
   out=$(run_bootstrap "$tmuxfb:$fb" "$w/home" zsh "$log")
 
-  assert_contains "$out" "SECONDMATE_LIVENESS: secondmate sm1: respawned" \
-    "a bare-shell (dead) secondmate should be reported as respawned"
-  assert_contains "$(cat "$log")" "kill-window -t firstmate:fm-sm1" \
-    "the stale endpoint must be killed before respawn (tmux refuses a same-named window over a live one)"
-  assert_contains "$(cat "$log")" "new-window" \
-    "a confirmed-dead secondmate should actually be relaunched"
-  pass "sweep: a confirmed-dead secondmate endpoint is killed and respawned"
+  assert_contains "$out" "SECONDMATE_LIVENESS: secondmate sm1: stopped" \
+    "a bare-shell (dead) secondmate should be reported as stopped"
+  [ ! -s "$log" ] || fail "startup must not kill or relaunch a stopped coordinator: $(cat "$log")"
+  pass "sweep: a confirmed-dead coordinator is reported without mutation"
+}
+
+test_sweep_reports_secondmate_without_window_as_stopped() {
+  local w fb tmuxfb log out
+  w=$(new_world sweep-no-window)
+  add_sm_home "$w" sm1 firstmate:fm-sm1
+  grep -v '^window=' "$w/home/state/sm1.meta" > "$w/home/state/sm1.meta.next"
+  mv "$w/home/state/sm1.meta.next" "$w/home/state/sm1.meta"
+  fb=$(make_toolchain "$w"); tmuxfb=$(make_liveness_tmux "$w")
+  log="$w/calls.log"; : > "$log"
+
+  out=$(run_bootstrap "$tmuxfb:$fb" "$w/home" zsh "$log")
+
+  assert_contains "$out" "SECONDMATE_LIVENESS: secondmate sm1: stopped" \
+    "a secondmate without endpoint metadata should be reported as stopped"
+  [ ! -s "$log" ] || fail "missing endpoint metadata must not mutate a coordinator: $(cat "$log")"
+  pass "sweep: a secondmate without endpoint metadata is reported as stopped"
+}
+
+test_sweep_reports_missing_endpoint_as_stopped() {
+  local w fb tmuxfb log out
+  w=$(new_world sweep-missing-endpoint)
+  add_sm_home "$w" sm1 firstmate:fm-sm1
+  fb=$(make_toolchain "$w"); tmuxfb=$(make_liveness_tmux "$w")
+  log="$w/calls.log"; : > "$log"
+
+  out=$(run_bootstrap "$tmuxfb:$fb" "$w/home" claude "$log" FM_TEST_TARGET_EXISTS=0)
+
+  assert_contains "$out" "SECONDMATE_LIVENESS: secondmate sm1: stopped" \
+    "a missing endpoint should be reported as stopped"
+  [ ! -s "$log" ] || fail "a missing endpoint must not mutate a coordinator: $(cat "$log")"
+  pass "sweep: a missing endpoint is reported as stopped"
+}
+
+test_sweep_reports_endpoint_query_failure_as_unproven() {
+  local w fb tmuxfb log out
+  w=$(new_world sweep-endpoint-query-failure)
+  add_sm_home "$w" sm1 firstmate:fm-sm1
+  fb=$(make_toolchain "$w"); tmuxfb=$(make_liveness_tmux "$w")
+  log="$w/calls.log"; : > "$log"
+
+  out=$(run_bootstrap "$tmuxfb:$fb" "$w/home" claude "$log" FM_TEST_TARGET_EXISTS=0 FM_TEST_TARGET_PROBE=failure)
+
+  assert_contains "$out" "SECONDMATE_LIVENESS: secondmate sm1: liveness unproven" \
+    "an endpoint query failure must not be misclassified as stopped"
+  [ ! -s "$log" ] || fail "an endpoint query failure must not mutate a coordinator: $(cat "$log")"
+  pass "sweep: endpoint query failures are unproven and report-only"
 }
 
 test_sweep_leaves_alive_secondmate_untouched() {
@@ -310,10 +405,10 @@ test_sweep_leaves_alive_secondmate_untouched() {
 
   out=$(run_bootstrap "$tmuxfb:$fb" "$w/home" claude "$log")
 
-  assert_contains "$out" "SECONDMATE_LIVENESS: secondmate sm1: already-live" \
-    "a live claude foreground process should be reported as already-live"
-  [ ! -s "$log" ] || fail "an already-live secondmate must never be killed or respawned: $(cat "$log")"
-  pass "sweep: an already-live secondmate is left untouched (no kill, no respawn)"
+  assert_not_contains "$out" "SECONDMATE_LIVENESS:" \
+    "a live coordinator should stay quiet in the startup report"
+  [ ! -s "$log" ] || fail "an already-live secondmate must never be touched: $(cat "$log")"
+  pass "sweep: an already-live secondmate is left untouched and quiet"
 }
 
 test_sweep_never_acts_on_inconclusive_reading() {
@@ -327,9 +422,9 @@ test_sweep_never_acts_on_inconclusive_reading() {
   # "Known gap") - ANY reading less than confident-dead must never respawn.
   out=$(run_bootstrap "$tmuxfb:$fb" "$w/home" node "$log")
 
-  assert_contains "$out" "SECONDMATE_LIVENESS: secondmate sm1: skipped: liveness probe inconclusive" \
-    "an inconclusive (unknown) probe reading should be reported as skipped"
-  [ ! -s "$log" ] || fail "an inconclusive reading must NEVER trigger a kill or respawn (would risk a duplicate agent): $(cat "$log")"
+  assert_contains "$out" "SECONDMATE_LIVENESS: secondmate sm1: liveness unproven" \
+    "an inconclusive probe reading should be reported as unproven"
+  [ ! -s "$log" ] || fail "an inconclusive reading must never mutate an endpoint: $(cat "$log")"
   pass "sweep: a transient/unknown probe reading is reported but never acted on"
 }
 
@@ -342,34 +437,34 @@ test_sweep_never_acts_on_unverified_harness_dead_reading() {
 
   out=$(run_bootstrap "$tmuxfb:$fb" "$w/home" zsh "$log")
 
-  assert_contains "$out" "SECONDMATE_LIVENESS: secondmate sm1: skipped: liveness probe inconclusive" \
-    "an unverified harness should not let a dead-looking endpoint become actionable"
-  [ ! -s "$log" ] || fail "an unverified harness must NEVER trigger a kill or respawn: $(cat "$log")"
-  pass "sweep: an unverified harness makes a dead-looking probe inconclusive"
+  assert_contains "$out" "SECONDMATE_LIVENESS: secondmate sm1: stopped" \
+    "a stopped endpoint is reported independently from its recorded harness"
+  [ ! -s "$log" ] || fail "an unverified harness must never trigger endpoint mutation: $(cat "$log")"
+  pass "sweep: stopped endpoints are report-only for every harness"
 }
 
-test_sweep_converges_no_retouch_once_alive() {
+test_sweep_never_retouches_across_reports() {
   local w fb tmuxfb log out1 out2
   w=$(new_world sweep-idempotent)
   add_sm_home "$w" sm1 firstmate:fm-sm1
   fb=$(make_toolchain "$w"); tmuxfb=$(make_liveness_tmux "$w")
   log="$w/calls.log"; : > "$log"
 
-  # Round 1: dead -> respawned (kill + new-window logged).
+  # Round 1: a stopped coordinator is reported, not restarted.
   out1=$(run_bootstrap "$tmuxfb:$fb" "$w/home" zsh "$log")
-  assert_contains "$out1" "SECONDMATE_LIVENESS: secondmate sm1: respawned" "round 1 should respawn the dead secondmate"
-  [ -s "$log" ] || fail "round 1 should have logged the kill+respawn window operations"
+  assert_contains "$out1" "SECONDMATE_LIVENESS: secondmate sm1: stopped" "round 1 should report the stopped coordinator"
+  [ ! -s "$log" ] || fail "round 1 must not start or stop the coordinator"
 
-  # Round 2: the (now-respawned) secondmate is genuinely alive - a second
-  # sweep must converge to a pure no-op, not respawn again.
+  # Round 2: when the coordinator becomes live through an explicit local
+  # resume, bootstrap remains quiet and still does not touch it.
   : > "$log"
   out2=$(run_bootstrap "$tmuxfb:$fb" "$w/home" claude "$log")
-  assert_contains "$out2" "SECONDMATE_LIVENESS: secondmate sm1: already-live" "round 2 should see the now-live secondmate and stop touching it"
-  [ ! -s "$log" ] || fail "round 2 must not re-kill or re-respawn an already-live secondmate: $(cat "$log")"
-  pass "sweep: idempotent by construction - a live secondmate is never re-touched on a later run"
+  assert_not_contains "$out2" "SECONDMATE_LIVENESS:" "round 2 should keep a live coordinator quiet"
+  [ ! -s "$log" ] || fail "round 2 must not touch an already-live secondmate: $(cat "$log")"
+  pass "sweep: startup reports but never re-touches coordinators"
 }
 
-test_sweep_skipped_under_detect_only() {
+test_sweep_reports_under_detect_only() {
   local w fb tmuxfb log out
   w=$(new_world sweep-detect-only)
   add_sm_home "$w" sm1 firstmate:fm-sm1
@@ -382,10 +477,10 @@ test_sweep_skipped_under_detect_only() {
 
   assert_contains "$out" "CREW_HARNESS_OVERRIDE: codex" \
     "detect-only should still execute fm-bootstrap.sh's read-only diagnostics"
-  assert_not_contains "$out" "SECONDMATE_LIVENESS:" \
-    "the read-only detect-only path must never run the mutating liveness sweep"
+  assert_contains "$out" "SECONDMATE_LIVENESS: secondmate sm1: stopped" \
+    "detect-only should report stopped coordinators through the read-only liveness sweep"
   [ ! -s "$log" ] || fail "detect-only must never touch any endpoint: $(cat "$log")"
-  pass "sweep: skipped entirely under FM_BOOTSTRAP_DETECT_ONLY=1, exactly like the other mutating sweeps"
+  pass "sweep: reports under FM_BOOTSTRAP_DETECT_ONLY=1 without endpoint mutation"
 }
 
 test_sweep_noop_with_no_secondmate_meta() {
@@ -408,12 +503,20 @@ test_sweep_noop_with_no_secondmate_meta() {
 test_tmux_agent_alive_classifies
 test_herdr_agent_alive_maps_pane_agent_state
 test_agent_alive_dispatcher_routes_and_falls_back
-test_sweep_respawns_confirmed_dead_secondmate
+test_target_state_recognizes_herdr_pane_not_found
+test_target_state_recognizes_orca_stale_terminal
+test_target_state_leaves_backend_failures_unproven
+test_target_state_recognizes_tmux_cold_boot_as_absence
+test_target_state_leaves_other_tmux_connection_errors_unproven
+test_sweep_reports_confirmed_dead_secondmate_without_mutation
+test_sweep_reports_secondmate_without_window_as_stopped
+test_sweep_reports_missing_endpoint_as_stopped
+test_sweep_reports_endpoint_query_failure_as_unproven
 test_sweep_leaves_alive_secondmate_untouched
 test_sweep_never_acts_on_inconclusive_reading
 test_sweep_never_acts_on_unverified_harness_dead_reading
-test_sweep_converges_no_retouch_once_alive
-test_sweep_skipped_under_detect_only
+test_sweep_never_retouches_across_reports
+test_sweep_reports_under_detect_only
 test_sweep_noop_with_no_secondmate_meta
 
 echo "# all fm-secondmate-liveness tests passed"

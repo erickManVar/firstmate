@@ -2,8 +2,7 @@
 # Tests for the local-HEAD secondmate sync: every secondmate home tracks the
 # PRIMARY firstmate checkout's current default-branch commit by a purely LOCAL
 # fast-forward (no origin fetch). Two hook points drive it - bin/fm-spawn.sh
-# (before launching a secondmate) and bin/fm-bootstrap.sh (a startup sweep of
-# every live secondmate home) - and both share the ff machinery in
+# before launching a secondmate and shares the ff machinery in
 # bin/fm-ff-lib.sh.
 #
 # The guarantees under test:
@@ -12,11 +11,6 @@
 #     and refuses - leaving work untouched - on a dirty, diverged, or
 #     in-flight (feature-branch) home.
 #   - No origin fetch happens in the local-HEAD sync path.
-#   - The bootstrap sweep fast-forwards every live secondmate home and reports a
-#     nudge (NUDGE_SECONDMATES:) ONLY for a running secondmate whose instruction
-#     surface actually changed; an already-current or readme-only home is never
-#     nudged, a skipped home is reported as SECONDMATE_SYNC:, and a home with no
-#     live metadata is never swept.
 #   - Spawning a secondmate fast-forwards its worktree to the primary's HEAD
 #     before launch, or warns and launches unchanged when the sync is skipped.
 set -u
@@ -283,245 +277,6 @@ SH
   [ "$FF_STATUS" = updated ] || fail "FF_STATUS: expected updated, got '$FF_STATUS'"
   [ ! -f "$log" ] || fail "git fetch was invoked in the local-HEAD sync path: $(cat "$log")"
   pass "T6 no fetch: the local-HEAD sync never invokes git fetch"
-}
-
-# --- T7: sweep advances a readme-only home but does NOT nudge it -------------
-test_sweep_nudge_requires_instruction_change() {
-  local w c1 base
-  w=$(new_world sweep-gate)
-  c1=$(head_of "$w/main")
-  add_sm_worktree "$w" sm-r "$c1"
-  bump_primary "$w" readme
-  base=$(primary_head_commit "$w/main")
-
-  FM_ROOT="$w/main" FM_HOME="$w/home"
-  FF_NUDGE_WINDOWS=""
-  FF_SEEN_HOMES=""
-  sweep_live_secondmate_metas "$w/home/state" "$base" yes >/dev/null
-
-  [ -z "$FF_NUDGE_WINDOWS" ] \
-    || fail "readme-only advance must not nudge, got: '$FF_NUDGE_WINDOWS'"
-  [ "$(head_of "$w/sm-r")" = "$base" ] \
-    || fail "home should still fast-forward even when it is not nudged"
-  pass "T7 sweep nudges on a real instruction change only, but still fast-forwards"
-}
-
-# --- T8: bootstrap sweeps live homes, nudges only the real instruction change -
-make_fake_toolchain() {
-  local dir=$1 fakebin
-  fakebin="$dir/fakebin"
-  mkdir -p "$fakebin"
-  fm_fake_exit0 "$fakebin" tmux node gh-axi chrome-devtools-axi lavish-axi
-  cat > "$fakebin/gh" <<'SH'
-#!/usr/bin/env bash
-exit 0
-SH
-  chmod +x "$fakebin/gh"
-  cat > "$fakebin/treehouse" <<'SH'
-#!/usr/bin/env bash
-if [ "${1:-}" = get ] && [ "${2:-}" = --help ]; then
-  printf '%s\n' 'Usage: treehouse get [--lease]'
-fi
-exit 0
-SH
-  chmod +x "$fakebin/treehouse"
-  cat > "$fakebin/no-mistakes" <<'SH'
-#!/usr/bin/env bash
-if [ "${1:-}" = --version ]; then
-  printf '%s\n' 'no-mistakes version v1.31.2 (fake)'
-  exit 0
-fi
-exit 0
-SH
-  chmod +x "$fakebin/no-mistakes"
-  printf '%s\n' "$fakebin"
-}
-
-add_real_jq() {
-  local fakebin=$1 real_jq
-  real_jq=$(command -v jq 2>/dev/null) || return 1
-  cat > "$fakebin/jq" <<SH
-#!/usr/bin/env bash
-exec '$real_jq' "\$@"
-SH
-  chmod +x "$fakebin/jq"
-}
-
-test_bootstrap_sweep_nudges_only_instruction_change() {
-  local w c1 c2 c3 fakebin out nudge_line
-  w=$(new_world boot-sweep)
-  c1=$(head_of "$w/main")
-  add_sm_worktree "$w" sm-instr "$c1"        # behind by an instruction change
-  bump_primary "$w" instr
-  c2=$(head_of "$w/main")
-  add_sm_worktree "$w" sm-readme "$c2"       # behind by a readme-only change
-  bump_primary "$w" readme
-  c3=$(head_of "$w/main")
-  add_sm_worktree "$w" sm-current "$c3"      # already on the primary's HEAD
-  # A home with NO live meta must never be swept (live = a running direct report).
-  git -C "$w/main" worktree add -q --detach "$w/sm-nonlive" "$c1"
-  printf 'sm-nonlive\n' > "$w/sm-nonlive/.fm-secondmate-home"
-
-  fakebin=$(make_fake_toolchain "$w")
-  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$w/home" FM_ROOT_OVERRIDE="$w/main" \
-    "$ROOT/bin/fm-bootstrap.sh" 2>/dev/null)
-
-  nudge_line=$(printf '%s\n' "$out" | grep '^NUDGE_SECONDMATES:' || true)
-  [ -n "$nudge_line" ] || fail "no NUDGE_SECONDMATES line emitted (got: $out)"
-  assert_contains "$nudge_line" "fm-sm-instr" "instruction-changed running secondmate is nudged"
-  assert_not_contains "$nudge_line" "firstmate:fm-sm-instr" "nudge lists stable fm-<id> selectors, not raw backend targets"
-  assert_not_contains "$nudge_line" "sm-readme" "readme-only advance is not nudged"
-  assert_not_contains "$nudge_line" "sm-current" "already-current secondmate is not nudged"
-
-  # Every live home advanced to the primary's HEAD; the already-current one stayed.
-  [ "$(head_of "$w/sm-instr")" = "$c3" ] || fail "sm-instr not at primary HEAD"
-  [ "$(head_of "$w/sm-readme")" = "$c3" ] || fail "sm-readme not at primary HEAD"
-  [ "$(head_of "$w/sm-current")" = "$c3" ] || fail "sm-current moved off primary HEAD"
-  # The non-live home is never touched by the bootstrap sweep.
-  [ "$(head_of "$w/sm-nonlive")" = "$c1" ] || fail "a home with no live meta was swept"
-  pass "T8 bootstrap sweeps live homes, nudges only the running real-instruction-change secondmate"
-}
-
-# --- T8b: nudge selectors stay fm-<id> when liveness respawn rotates herdr ----
-# Reproduces the 2026-07-07 session-start bug: secondmate_sync used to print raw
-# backend targets (default:w9:pY) that liveness respawn immediately replaced
-# (default:wA:p2), so fm-send with the printed target fell back to tmux and failed
-# while fm-<id> resolved through current meta.
-make_nudge_herdr_fake() {
-  local dir=$1 stale=$2 fresh=$3 fakebin
-  fakebin=$(fm_fakebin "$dir")
-  cat > "$fakebin/herdr" <<SH
-#!/usr/bin/env bash
-set -u
-cmd=\${1:-}; sub=\${2:-}; arg=\${3:-}
-case "\$cmd \$sub" in
-  "status --json")
-    printf '{"client":{"version":"0.7.1","protocol":14},"server":{"running":true}}\n'
-    ;;
-  "pane get")
-    if [ "\$arg" = "${stale#*:}" ]; then
-      printf '{"result":{"pane":{"pane_id":"${stale#*:}"}}}\n'
-    elif [ "\$arg" = "${fresh#*:}" ]; then
-      printf '{"result":{"pane":{"pane_id":"${fresh#*:}"}}}\n'
-    else
-      printf '{"error":{"code":"pane_not_found","message":"missing"}}\n' >&2
-      exit 0
-    fi
-    ;;
-  "agent get")
-    if [ "\$arg" = "${stale#*:}" ]; then
-      printf '{"error":{"code":"agent_not_found","message":"gone"}}\n' >&2
-    elif [ "\$arg" = "${fresh#*:}" ]; then
-      printf '{"result":{"agent":{"agent_status":"idle"}}}\n'
-    else
-      printf '{"error":{"code":"agent_not_found","message":"gone"}}\n' >&2
-    fi
-    ;;
-  "pane send-text"|"pane run"|"pane send-keys")
-    if [ "\$arg" = "${stale#*:}" ]; then
-      exit 1
-    fi
-    exit 0
-    ;;
-esac
-exit 0
-SH
-  chmod +x "$fakebin/herdr"
-  printf '%s\n' "$fakebin"
-}
-
-test_nudge_selector_stable_after_herdr_respawn() {
-  local w c1 stale fresh fakebin herdrfb toolchain out nudge_line meta window resolved stale_send fresh_send spawn_stub
-  stale=default:w9:pY
-  fresh=default:wA:p2
-  w=$(new_world nudge-herdr-rotate)
-  c1=$(head_of "$w/main")
-  add_sm_worktree "$w" sm-instr "$c1"
-  bump_primary "$w" instr
-
-  meta="$w/home/state/sm-instr.meta"
-  {
-    printf 'window=%s\n' "$stale"
-    printf 'backend=herdr\n'
-    printf 'kind=secondmate\n'
-    printf 'harness=claude\n'
-    printf 'home=%s/sm-instr\n' "$w"
-  } > "$meta"
-
-  spawn_stub="$w/spawn-stub.sh"
-  cat > "$spawn_stub" <<SH
-#!/usr/bin/env bash
-set -u
-id=\${1:-}
-meta="\$FM_HOME/state/\$id.meta"
-[ -f "\$meta" ] || exit 1
-sed -i.bak "s/^window=.*/window=$fresh/" "\$meta" 2>/dev/null || \
-  sed -i "s/^window=.*/window=$fresh/" "\$meta"
-rm -f "\$meta.bak"
-exit 0
-SH
-  chmod +x "$spawn_stub"
-  cp "$spawn_stub" "$w/main/bin/fm-spawn.sh"
-
-  herdrfb=$(make_nudge_herdr_fake "$w/herdr" "$stale" "$fresh")
-  toolchain=$(make_fake_toolchain "$w")
-  if ! add_real_jq "$toolchain"; then
-    pass "T8b nudge selector herdr respawn skipped without jq"
-    return
-  fi
-  out=$(PATH="$herdrfb:$toolchain:$BASE_PATH" HERDR_ENV=1 FM_BACKEND=herdr \
-    FM_HOME="$w/home" FM_ROOT_OVERRIDE="$w/main" \
-    "$ROOT/bin/fm-bootstrap.sh" 2>/dev/null)
-
-  nudge_line=$(printf '%s\n' "$out" | grep '^NUDGE_SECONDMATES:' || true)
-  [ -n "$nudge_line" ] || fail "no NUDGE_SECONDMATES line emitted (got: $out)"
-  assert_contains "$nudge_line" "fm-sm-instr" "bootstrap nudge lists stable fm-<id>"
-  assert_not_contains "$nudge_line" "w9:pY" "bootstrap nudge must not list stale herdr endpoint"
-  assert_contains "$out" "SECONDMATE_LIVENESS: secondmate sm-instr: respawned" \
-    "liveness respawn rotated the herdr endpoint in the same bootstrap run"
-
-  window=$(grep '^window=' "$meta" | tail -1 | cut -d= -f2-)
-  [ "$window" = "$fresh" ] || fail "respawn stub did not rotate meta window to '$fresh' (got '$window')"
-
-  # shellcheck disable=SC2016  # $0/$1 belong to the inner bash -c process.
-  resolved=$(bash -c '. "$0/bin/fm-backend.sh"; fm_backend_resolve_selector fm-sm-instr "$1"' "$ROOT" "$w/home/state")
-  [ "$resolved" = "$fresh" ] || fail "fm-<id> should resolve through post-respawn meta, got '$resolved'"
-
-  # shellcheck disable=SC2016  # $0/$1 belong to the inner bash -c process.
-  stale_send=$(PATH="$herdrfb:$toolchain:$BASE_PATH" bash -c \
-    '. "$0/bin/fm-backend.sh"; fm_backend_source herdr; fm_backend_herdr_send_literal "$1" "nudge"' "$ROOT" "$stale" 2>/dev/null; printf '%s' "$?")
-  [ "$stale_send" != 0 ] || fail "explicit stale herdr endpoint send should fail"
-
-  # shellcheck disable=SC2016  # $0/$1 belong to the inner bash -c process.
-  fresh_send=$(PATH="$herdrfb:$toolchain:$BASE_PATH" bash -c \
-    '. "$0/bin/fm-backend.sh"; fm_backend_source herdr; fm_backend_herdr_send_literal "$1" "nudge"' "$ROOT" "$fresh" 2>/dev/null; printf '%s' "$?")
-  [ "$fresh_send" = 0 ] || fail "send through fm-<id>-resolved fresh endpoint should succeed"
-
-  pass "T8b nudge selectors stay fm-<id> when liveness respawn rotates herdr endpoint"
-}
-
-# --- T9: bootstrap surfaces a skipped dirty live secondmate home --------------
-test_bootstrap_sweep_surfaces_skipped_home() {
-  local w c1 base before fakebin out skip_line
-  w=$(new_world boot-skip)
-  c1=$(head_of "$w/main")
-  add_sm_worktree "$w" sm-dirty "$c1"
-  bump_primary "$w" instr
-  base=$(primary_head_commit "$w/main")
-  printf 'uncommitted local edit\n' >> "$w/sm-dirty/AGENTS.md"
-  before=$(head_of "$w/sm-dirty")
-
-  fakebin=$(make_fake_toolchain "$w")
-  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$w/home" FM_ROOT_OVERRIDE="$w/main" \
-    "$ROOT/bin/fm-bootstrap.sh" 2>/dev/null)
-
-  skip_line=$(printf '%s\n' "$out" | grep '^SECONDMATE_SYNC: secondmate sm-dirty: skipped:' || true)
-  [ -n "$skip_line" ] || fail "no SECONDMATE_SYNC skip line emitted (got: $out)"
-  assert_contains "$skip_line" "dirty working tree" "dirty skipped home reports the actionable reason"
-  [ "$(head_of "$w/sm-dirty")" = "$before" ] || fail "dirty home HEAD moved"
-  [ "$(head_of "$w/main")" = "$base" ] || fail "primary HEAD changed during bootstrap"
-  grep -q 'uncommitted local edit' "$w/sm-dirty/AGENTS.md" || fail "dirty edit was discarded"
-  pass "T9 bootstrap surfaces a skipped dirty live secondmate home"
 }
 
 # --- T10: spawning a secondmate fast-forwards its worktree before launch ------
@@ -791,10 +546,6 @@ test_ff_dirty
 test_ff_diverged
 test_ff_inflight_feature_branch
 test_no_fetch_in_local_path
-test_sweep_nudge_requires_instruction_change
-test_bootstrap_sweep_nudges_only_instruction_change
-test_nudge_selector_stable_after_herdr_respawn
-test_bootstrap_sweep_surfaces_skipped_home
 test_spawn_fast_forwards_before_launch
 test_spawn_warns_when_sync_skipped_before_launch
 test_seed_marker_clean_when_gitignored

@@ -643,23 +643,24 @@ fm_backend_composer_state() {  # <backend> <target> -> empty|pending|unknown
   esac
 }
 
-# fm_backend_target_exists: cheap, READ-ONLY existence check - does the
+# fm_backend_target_probe: cheap, READ-ONLY endpoint probe - does the
 # recorded TARGET endpoint still exist on BACKEND? Never starts a server or
 # session: for herdr this deliberately queries the pane directly instead of
 # going through fm_backend_herdr_target_ready (which auto-starts the herdr
 # server as a side effect via fm_backend_herdr_server_ensure - fine for an
 # operation that is about to use the pane, wrong for a passive liveness
 # probe). A gone tmux window or an unqueryable herdr pane (server down, pane
-# closed), missing zellij pane, or unreadable Orca terminal simply fails, which
-# IS "does not exist" for this purpose.
+# closed), missing zellij pane, or unreadable Orca terminal can fail. Callers
+# that need to distinguish confirmed absence from a probe failure must use
+# fm_backend_target_state below.
 # Mirrors fm-crew-state.sh's pane_readable check; exists here as one shared
 # primitive so callers that only need a fast alive/dead read (recovery
 # digests, the session-start fleet digest) do not re-derive it inline.
-fm_backend_target_exists() {  # <backend> <target> [expected-label]
+fm_backend_target_probe() {  # <backend> <target> [expected-label]
   local backend=$1 target=$2 expected_label=${3:-} session pane
   case "$backend" in
     tmux)
-      tmux display-message -p -t "$target" '#{pane_id}' >/dev/null 2>&1
+      tmux display-message -p -t "$target" '#{pane_id}' >/dev/null
       ;;
     herdr)
       fm_backend_source herdr || return 1
@@ -674,7 +675,7 @@ fm_backend_target_exists() {  # <backend> <target> [expected-label]
       # flag on top, so this check is correctly scoped even when the caller's
       # own ambient session (e.g. the primary firstmate's default session) is
       # a DIFFERENT one than the target's.
-      fm_backend_herdr_cli "$session" pane get "$pane" >/dev/null 2>&1
+      fm_backend_herdr_cli "$session" pane get "$pane" >/dev/null
       ;;
     zellij)
       fm_backend_source zellij || return 1
@@ -682,7 +683,7 @@ fm_backend_target_exists() {  # <backend> <target> [expected-label]
       ;;
     orca)
       fm_backend_source orca || return 1
-      fm_backend_orca_capture "$target" 1 >/dev/null 2>&1
+      fm_backend_orca_capture "$target" 1 >/dev/null
       ;;
     cmux)
       fm_backend_source cmux || return 1
@@ -694,13 +695,54 @@ fm_backend_target_exists() {  # <backend> <target> [expected-label]
   esac
 }
 
+# fm_backend_target_state: classify a passive endpoint probe without treating
+# an unavailable backend or query error as evidence that the endpoint is gone.
+# Prints exists, missing, or unknown. "missing" is deliberately conservative:
+# only backend output that explicitly identifies an absent target - or, for
+# tmux, an absent server - reaches it.
+fm_backend_target_state() {  # <backend> <target> [expected-label]
+  local backend=$1 output
+  case "$backend" in
+    zellij|cmux)
+      fm_backend_source "$backend" || { printf 'unknown'; return 0; }
+      "fm_backend_${backend}_target_state" "$2" "${3:-}"
+      return 0
+      ;;
+  esac
+  if output=$(fm_backend_target_probe "$@" 2>&1); then
+    printf 'exists'
+    return 0
+  fi
+  # tmux cold boot: every tmux session, window, and pane lives inside the
+  # server process, so a client message that the server itself is not there is
+  # confirmed endpoint absence, not an unproven query failure. The two client
+  # signatures - "no server running on <socket>" (stale socket, ECONNREFUSED)
+  # and "error connecting to <socket> (No such file or directory)" (socket
+  # gone, the machine-restart case) - are recorded empirically in
+  # docs/tmux-backend.md "Cold-boot endpoint absence". Any other connection
+  # error (permission denied, an unreadable socket dir, ...) stays unknown and
+  # fails closed; never broaden these patterns to arbitrary failures.
+  case "$backend:$output" in
+    tmux:*"can't find pane"*|tmux:*"can't find window"*|tmux:*"can't find session"*) printf 'missing' ;;
+    tmux:*"no server running"*|tmux:*"error connecting to"*"(No such file or directory)"*) printf 'missing' ;;
+    herdr:*"pane_not_found"*|orca:*"terminal_handle_stale"*) printf 'missing' ;;
+    *) printf 'unknown' ;;
+  esac
+}
+
+# fm_backend_target_exists: compatibility predicate for callers that only need
+# a fast endpoint-presence check.
+fm_backend_target_exists() {  # <backend> <target> [expected-label]
+  [ "$(fm_backend_target_state "$@")" = exists ]
+}
+
 # fm_backend_agent_alive: CONFIDENT liveness of a live harness-agent PROCESS
 # under <target>, distinct from fm_backend_target_exists's pane-PRESENCE-only
 # check above. A secondmate agent that has exited leaves its backend endpoint
 # alive as a bare shell; fm_backend_target_exists reports that shell as
-# "alive" because the pane itself still exists, which is exactly the gap
-# bin/fm-bootstrap.sh's session-start secondmate-liveness sweep exists to
-# close (AGENTS.md "Session start"). Prints one of:
+# "alive" because the pane itself still exists. The session-start liveness
+# report surfaces that gap without changing it (AGENTS.md "Session start").
+# Prints one of:
 #   alive   - a real agent process is confirmed running.
 #   dead    - CONFIDENTLY not an agent: a bare shell (tmux) or a
 #             structurally-gone/no-agent-registered pane (herdr).
@@ -713,9 +755,9 @@ fm_backend_target_exists() {  # <backend> <target> [expected-label]
 # foreground-process primitive). zellij and cmux report unknown until
 # independently verified.
 # Callers must treat unknown exactly like an unreadable target: NEVER license
-# an action from it alone - the secondmate-liveness sweep gates a respawn on
-# `dead` only, precisely so a momentary read glitch can never duplicate a
-# live supervisor.
+# an action from it alone. The explicit project-local launcher resumes only
+# after a `dead` result, so a momentary read glitch cannot duplicate a live
+# supervisor.
 fm_backend_agent_alive() {  # <backend> <target>
   local backend=$1 target=$2
   fm_backend_source "$backend" || { printf 'unknown'; return 0; }

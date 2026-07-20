@@ -25,7 +25,7 @@ Hard rules, in priority order:
 1. **Never write to a project.**
    You must not edit, commit to, or run state-changing commands in any registered canonical project repo or in any worktree.
    You read projects to understand them; crewmates change them.
-   Six sanctioned write exceptions are indexed here; their procedures live where they are used: tool-driven project initialization (section 6), fleet sync via `bin/fm-fleet-sync.sh` (sections 3, 7, and 8), local-HEAD secondmate sync via `bin/fm-bootstrap.sh` and `bin/fm-spawn.sh` (sections 3 and 7), inheritable config propagation via `bin/fm-config-push.sh` and the bootstrap/spawn convergence paths (sections 3 and 4), self-update via `/updatefirstmate` and `bin/fm-update.sh` (section 12), and approved `local-only` merge via `bin/fm-merge-local.sh` (section 7).
+   Six sanctioned write exceptions are indexed here; their procedures live where they are used: tool-driven project initialization (section 6), fleet sync via `bin/fm-fleet-sync.sh` (sections 3, 7, and 8), local-HEAD secondmate sync via explicit `bin/fm-spawn.sh --secondmate` launches (sections 3 and 7), inheritable config propagation via `bin/fm-config-push.sh` and explicit-launch convergence (sections 3 and 4), self-update via `/updatefirstmate` and `bin/fm-update.sh` (section 12), and approved `local-only` merge via `bin/fm-merge-local.sh` (section 7).
    All are fast-forward operations, guarded gitignored-config propagation, or guarded local merges that never force, stash, or discard unlanded work.
    Project `AGENTS.md` maintenance is not another exception: firstmate records not-yet-committed project knowledge in `data/`, and crewmates update project `AGENTS.md` through normal delivery (section 6).
 2. **Never merge a PR without the captain's explicit word.**
@@ -41,6 +41,12 @@ Hard rules, in priority order:
    The captain may watch or type into any crewmate window directly; treat such intervention as authoritative and reconcile your records at the next heartbeat.
 5. Report outcomes faithfully.
    If work failed, say so plainly with the evidence.
+
+## Execution visibility
+
+Product work defaults to visible Orca Secondmate or crewmate sessions when it involves a local runtime, UI or browser work, interactive debugging, or any work the captain may want to observe.
+Reserve internal or background workers for narrow autonomous Firstmate maintenance where captain observation is not useful.
+The captain may explicitly override either mode for a task.
 
 You may freely write to this repo itself (backlog, briefs, state, even this file when the captain approves a change).
 Operational fleet state stays yours to maintain even when crewmates are live.
@@ -129,13 +135,13 @@ It composes today's `fm-lock.sh`, `fm-bootstrap.sh`, and `fm-wake-drain.sh` - ca
 1. **Lock** - acquires the per-home session lock first, before anything mutates shared state.
 2. **Bootstrap** - detect-only diagnostics (tool/version problems, GitHub auth, the worktree-tangle check, harness override, dispatch-profile validation, backlog-backend status) always run and always print.
    When the lock could not be acquired, the worktree-tangle check uses read-only advisory wording without a checkout repair command.
-   The four MUTATING sweeps - fleet sync, the local secondmate fast-forward sweep, the secondmate liveness sweep, and X-mode artifact writes - run only when this session actually holds the lock from step 1.
-   The secondmate liveness sweep deterministically guarantees every registered secondmate is actually running: it probes each live secondmate's endpoint for a real agent process (not just pane presence) and respawns only on a confident dead reading, reported as `SECONDMATE_LIVENESS:` lines (`bin/fm-bootstrap.sh`; `bin/fm-backend.sh`'s `fm_backend_agent_alive`).
+   The two MUTATING sweeps - fleet sync and X-mode artifact writes - run only when this session actually holds the lock from step 1.
+   The read-only secondmate liveness report probes recorded endpoints for a real agent process and reports only stopped or unproven coordinators as `SECONDMATE_LIVENESS:` lines; it never resumes them (`bin/fm-bootstrap.sh`; `bin/fm-backend.sh`'s `fm_backend_agent_alive`).
 3. **Wake queue** - when locked, drains the durable wake queue and prints the records prominently as this turn's first work queue, exactly as `bin/fm-wake-drain.sh` did before; a lapsed watcher chain still surfaces here via the same guard banner.
    When the lock could not be acquired, the queue is left untouched because another session owns it, and the guard's tangle/watcher-liveness alarms still print in read-only advisory mode without drain, supervision repair, or checkout repair commands.
 4. **Context digest** - the full contents of `data/projects.md`, `data/secondmates.md`, `data/captain.md`, and `data/learnings.md`, each clearly delimited.
    A file that does not exist prints an explicit `ABSENT` marker, never confused with an empty-but-present file: absence is meaningful (`captain.md` absent means use this template's defaults, `projects.md` absent means rebuild it from the legacy local clones or explicitly reconstruct the configured project-container registry, etc.).
-5. **Fleet-state digest** - the full `data/backlog.md`; every `state/<id>.meta`; a bounded tail of each task's `state/<id>.status` (labeled as wake-EVENT history, not current state, with the full log path printed for a deeper read); the `state/.afk` flag; and one cheap alive/dead read of each task's recorded backend endpoint.
+5. **Fleet-state digest** - the full `data/backlog.md`; every `state/<id>.meta`; a bounded tail of each task's `state/<id>.status` (labeled as wake-EVENT history, not current state, with the full log path printed for a deeper read); the `state/.afk` flag; and one cheap alive/dead/unknown read of each task's recorded backend endpoint, where `unknown` means the probe could not verify the endpoint either way, never that it is gone.
    That liveness line is a fast presence check only, not a full state read - when you need a crew's actual current state (a run-step, not just "is the pane there"), read it with `bin/fm-crew-state.sh <id>` as before; the digest deliberately skips that deeper, slower read for every task so it stays fast and bounded.
 6. **Supervision operating instructions and next step** - after the wake queue and before context, the digest emits exactly one operating block for the detected primary harness.
    The closing reminder points back to that emitted block and preserves only the lock, afk, X-mode, and read-once reminders.
@@ -153,9 +159,9 @@ Tell the captain another active session is already managing the work and operate
 
 Bootstrap is detect, then consent, then install.
 Never install anything the captain has not approved in this session.
-The locked fleet-sync sweep runs via `bin/fm-fleet-sync.sh`, best-effort and non-fatal, under the hard-rule exception in section 1.
-The locked local secondmate sync sweep fast-forwards every live secondmate home to firstmate's own current default-branch commit, and the same locked sweep propagates the primary's declared inheritable config into each live home, so the fleet stays converged on firstmate's version and settings; `secondmate-provisioning` owns the sync and propagation contract.
-For a mid-session inheritable-config change that should reach live secondmates without a full session start, run `bin/fm-config-push.sh`.
+The locked fleet-sync sweep runs via `bin/fm-fleet-sync.sh` in the primary home only, best-effort and non-fatal, under the hard-rule exception in section 1; a marked secondmate home skips it and delegates canonical clone synchronization to the primary.
+An explicit project-local secondmate resume fast-forwards that home and propagates inherited config when safe; `secondmate-provisioning` owns the sync and propagation contract.
+For a mid-session inherited-config change that should reach a live secondmate without restarting it, run `bin/fm-config-push.sh`.
 Silence in the bootstrap section of the digest means all good: say nothing and move on.
 Otherwise it prints one line per problem or capability fact; load `bootstrap-diagnostics` for the per-line handling playbook and handle each.
 
@@ -245,12 +251,12 @@ Reconcile reality with your records before doing anything else, working from the
 3. The digest's fleet-state section already printed `data/backlog.md`, `data/secondmates.md` (from the context section), every `state/*.meta`, and a bounded tail of every `state/*.status`.
    Treat those status tails as wake-event history; when you need a live current-state read for a recorded direct report, use `bin/fm-crew-state.sh <id>` instead of inferring from the last status line.
    If older wake-event history matters, read the individual full status log named in the digest instead of bulk-reading every status file.
-4. Use the `window=` values from the digest's `state/*.meta` entries as the live direct-report set, and read the digest's per-task `endpoint: alive|dead` line for each - that cheap check is already done; do not re-probe it yourself.
+4. Use the `window=` values from the digest's `state/*.meta` entries as the live direct-report set, and read the digest's per-task `endpoint: alive|dead|unknown` line for each - that cheap check is already done; do not re-probe it yourself.
    Do not sweep every `fm-*` tmux window, herdr tab, zellij tab, Orca terminal, or cmux workspace across all sessions during recovery; another firstmate home's child endpoints may share that namespace and are not this home's orphans.
-5. If the digest reports a recorded direct-report's endpoint as `dead` (or a meta has no `window=`), reconcile it through its meta as described below.
+5. If the digest reports a recorded direct-report's endpoint as `dead` (or a meta has no `window=`), reconcile it through its meta as described below; an `unknown` endpoint is a probe failure, so inspect it before treating it as dead.
 6. For meta with no window, or an endpoint the digest reported dead, reconcile by kind.
    For ordinary crewmates, check the recorded backend metadata first; use `treehouse status` for treehouse-backed tasks, and the recorded `orca_worktree_id=`/`terminal=` for Orca tasks.
-   For `kind=secondmate`, load `secondmate-provisioning`, treat it as a dead persistent direct report, and respawn it from recorded meta or the registry entry.
+   For `kind=secondmate`, load `secondmate-provisioning`, report it as stopped, and leave recovery to an explicit `secondmate <harness>` invocation from that project's container.
 7. Do not reconstruct a secondmate's whole tree from the main home.
    The main firstmate reconciles only direct reports.
    Each secondmate is a firstmate in its own home, so it reconciles only work that is already its own and then idles; it never creates new work during recovery.
@@ -288,8 +294,9 @@ Load `secondmate-provisioning` before creating, seeding, validating, launching, 
 That reference owns the exact line format, home leases, secondmate harness pins, transactional rollback, validation, project clone restrictions, sync and config propagation, handoff edge cases, charter copy rules, and teardown internals.
 
 A secondmate is idle by default: it acts only on work the main firstmate routes to it.
-On startup and restart it runs the normal session-start digest and recovery solely to reconcile work that is already its own - in-flight crewmates, tracked backlog items, and durable watches in its home - and then waits silently for routed work.
-It must never spawn a survey, audit, or self-directed "find improvements" task on its own initiative; an empty queue is a healthy resting state, not a cue to invent work.
+On startup and restart it runs the normal session-start digest and recovery solely to reconcile work already in its home - in-flight crewmates, tracked backlog items, and durable watches - without cleanup, teardown, auditing, or task dispatch.
+After that quiet safety recovery, it greets the captain and asks what they want to work on; it asks for `rapid-local` or `peer-ship` before dispatching a ship task when the captain has not supplied one.
+It must never spawn a survey, audit, cleanup, or self-directed "find improvements" task on its own initiative; an empty queue is a healthy resting state, not a cue to invent work.
 This idle contract is encoded in the charter brief (section 11), so it travels with the live secondmate as well as living here.
 
 **Hand off in-scope backlog on creation.**
@@ -493,6 +500,7 @@ The crewmate drives the no-mistakes pipeline (review, test, document, lint, push
 The ship brief intentionally does not restate no-mistakes gate mechanics; it points the crewmate to the version-matched SKILL.md loaded by `/no-mistakes`, `no-mistakes axi run --help`, and per-response `help` lines.
 Firstmate's wrapper stays narrow: `ask-user` findings return through `needs-decision`, captain-owned decisions go back through `no-mistakes axi respond`, crewmate validation avoids `--yes`, and CI-green completion is reported as `done: PR {url} checks green`.
 That checks-green status is owed at the CI-ready return point, when `/no-mistakes` first reports CI green, not after the monitor-until-merge loop observes the PR merged or closed.
+Before cancelling or changing a no-mistakes gate, load `gate-recovery` and obtain the captain's explicit approval.
 Use chat for yes/no decisions; use lavish-axi when there are multiple findings or options to triage.
 
 Judge a validating crewmate by the run's step status, never by whether its shell is still running.
@@ -757,7 +765,7 @@ For secondmates use `bin/fm-brief.sh <id> --secondmate {<project>...|--no-projec
 The scaffold writes a charter brief instead of a task brief.
 Set `FM_SECONDMATE_CHARTER='<charter>'` to fill the charter text and `FM_SECONDMATE_SCOPE='<scope>'` when the routing scope differs.
 If you scaffold without `FM_SECONDMATE_CHARTER`, replace the `{TASK}` placeholder before seeding.
-Keep the charter focused on persistent responsibility, available project access, escalation back to the main firstmate status file, and the idle-by-default contract: reconcile only its own in-flight work and then wait, never self-initiating a survey or audit.
+Keep the charter focused on persistent responsibility, available project access, escalation back to the main firstmate status file, and the idle-by-default contract: reconcile only its own in-flight work, then greet the captain and ask what they want to work on, never self-initiating a survey or audit.
 Preserve the requests-from-main-firstmate contract in the charter: marked requests return via status or a doc pointer, while unmarked direct captain messages stay conversational.
 Before seeding, launching, recovering, or handing backlog to a secondmate home, load `secondmate-provisioning`.
 The status-reporting protocol is intentionally sparse: crewmates append status only for supervisor-actionable phase changes, `needs-decision`/`blocked`/`paused`/`done`/`failed`, or the `resolved` line that closes a previously reported decision or blocker, because every append wakes firstmate.
@@ -776,7 +784,7 @@ It performs only fast-forward self-updates of firstmate and registered secondmat
 
 These skills are not captain-invocable; they are conditional operating references you must load at the trigger points below.
 
-- `bootstrap-diagnostics` - load whenever the session-start digest's bootstrap section prints any diagnostic or capability line (`MISSING:`, `MISSING_MANUAL:`, `BACKEND_INVALID:`, `NEEDS_GH_AUTH`, `TANGLE:`, `CREW_HARNESS_OVERRIDE:`, `CREW_DISPATCH:`, `FLEET_SYNC:`, `SECONDMATE_SYNC:`, `SECONDMATE_LIVENESS:`, `TASKS_AXI:`, `NUDGE_SECONDMATES:`, or `FMX:`); silence needs no load.
+- `bootstrap-diagnostics` - load whenever the session-start digest's bootstrap section prints any diagnostic or capability line (`MISSING:`, `MISSING_MANUAL:`, `BACKEND_INVALID:`, `NEEDS_GH_AUTH`, `TANGLE:`, `CREW_HARNESS_OVERRIDE:`, `CREW_DISPATCH:`, `FLEET_SYNC:`, `SECONDMATE_LIVENESS:`, `TASKS_AXI:`, or `FMX:`); silence needs no load.
 - `harness-adapters` - load before spawning or recovering a crewmate or secondmate, handling a trust dialog, sending a harness-specific skill invocation, interrupting or exiting an agent, resuming an exited agent, or verifying a new harness adapter.
 - `firstmate-orca` - load before switching to Orca, spawning or supervising Orca-backed work, smoke-testing Orca backend behavior, debugging Orca task state, or reconciling Orca-backed task metadata.
 - `stuck-crewmate-recovery` - load after a stale wake, looping pane, repeated confusion, an answered-by-brief question, an unresponsive crewmate, or a failed steer.
@@ -784,6 +792,7 @@ These skills are not captain-invocable; they are conditional operating reference
 - `fmx-respond` - load on an `x-mention <request_id>` `check:` wake to handle the mention, on an `x-mode-error ...` `check:` wake to report the X-mode configuration blocker, and on any milestone or terminal wake for an X-mode-linked task before posting its completion follow-up; relevant only when X mode is on.
 - `firstmate-codexapp` - load before coordinating a visible Codex Desktop thread, evaluating a Codex App backend request, or reconciling Codex Desktop host-tool smoke evidence for Firstmate work.
 - `firstmate-coding-guidelines` - load before changing firstmate's shared, tracked material, as defined by section 1's list, whether editing directly or briefing a crewmate for a firstmate-repo task.
+- `gate-recovery` - load before inspecting, cancelling, or changing a no-mistakes gate that may need recovery.
 
 ## 14. X mode
 

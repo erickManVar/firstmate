@@ -304,6 +304,26 @@ test_expected_label_refuses_ambiguous_untagged_tab() {
   pass "fm_backend_zellij_tab_matches_label: refuses an untagged legacy label match when 2+ live tabs share it (migration ambiguity guard)"
 }
 
+test_target_state_classifies_confirmed_absence_and_query_failure() {
+  local dir fb out
+  dir="$TMP_ROOT/target-state-missing"; mkdir -p "$dir/responses"
+  printf '[]\n' > "$dir/responses/1.out"
+  fb=$(make_zellij_fakebin "$dir")
+  out=$( PATH="$fb:$PATH" FM_ZELLIJ_LOG="$dir/log" FM_ZELLIJ_RESPONSES="$dir/responses" \
+    FM_ZELLIJ_SESSION_LIST="firstmate" \
+    bash -c '. "$0/bin/fm-backend.sh"; fm_backend_target_state zellij firstmate:7' "$ROOT" )
+  [ "$out" = missing ] || fail "a pane absent from a confirmed zellij session should classify as missing, got '$out'"
+
+  dir="$TMP_ROOT/target-state-malformed"; mkdir -p "$dir/responses"
+  printf 'not json\n' > "$dir/responses/1.out"
+  fb=$(make_zellij_fakebin "$dir")
+  out=$( PATH="$fb:$PATH" FM_ZELLIJ_LOG="$dir/log" FM_ZELLIJ_RESPONSES="$dir/responses" \
+    FM_ZELLIJ_SESSION_LIST="firstmate" \
+    bash -c '. "$0/bin/fm-backend.sh"; fm_backend_target_state zellij firstmate:7' "$ROOT" )
+  [ "$out" = unknown ] || fail "an unreadable zellij pane query should classify as unknown, got '$out'"
+  pass "fm_backend_target_state: zellij distinguishes confirmed absence from query failure"
+}
+
 test_list_live_scopes_to_own_home_tag() {
   local dir fb out own_title foreign_title other_root
   dir="$TMP_ROOT/list-live-scope"; mkdir -p "$dir/responses"
@@ -1024,6 +1044,7 @@ test_scoped_title_uses_secondmate_home_label
 test_scoped_title_changes_with_root_path
 test_expected_label_accepts_unambiguous_untagged_legacy_tab
 test_expected_label_refuses_ambiguous_untagged_tab
+test_target_state_classifies_confirmed_absence_and_query_failure
 test_list_live_scopes_to_own_home_tag
 test_resolve_bare_selector_prefers_scoped_title
 test_resolve_bare_selector_refuses_ambiguous_untagged
