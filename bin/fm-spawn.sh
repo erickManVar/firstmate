@@ -640,7 +640,7 @@ if [ "$KIND" = secondmate ]; then
   WT="$PROJ_ABS"
   # Local-HEAD sync: before launch, fast-forward this secondmate's worktree to the
   # PRIMARY checkout's current default-branch commit, so a freshly spawned or
-  # recovery-respawned secondmate always runs the primary's version (AGENTS.md
+  # explicitly resumed secondmate always runs the primary's version (AGENTS.md
   # spawn section). No network dependency: a linked-worktree home already holds the
   # commit, while a standalone clone missing it has the commit acquired from the
   # trusted local primary repository over the filesystem (fm-ff-lib.sh). ff-only

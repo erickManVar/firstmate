@@ -105,7 +105,7 @@ Meta records the same fields as ship/scout Orca tasks plus the secondmate `home=
 Agent liveness for the session-start sweep and the `bin/secondmate` launcher comes from `fm_backend_orca_agent_alive`.
 Orca exposes no foreground-process primitive (verified 2026-07-14 against Orca app 1.4.116: `orca terminal show --json` carries no process fields, and `orca terminal wait --for exit` returns `{"ok":false,"error":{"code":"timeout"}}` even on an idle shell), so the classifier ports the tmux probe's semantics to the OS level: `lsof -a -d cwd -Fpc -- <terminal worktreePath>` enumerates the processes rooted in the home, and any verified harness comm or bare dotted version token reads `alive`, an only-shells result reads `dead`, and everything else (no processes, a bare interpreter such as pi's `node`, an unreadable terminal, a missing `lsof`) reads `unknown` and is never acted on.
 The probe is cwd-scoped to the worktree rather than the single terminal, which can only err toward `alive` - the direction that never spawns a duplicate.
-Dead respawns (bootstrap sweep and launcher) pass the recorded `backend=` explicitly, so a dead Orca coordinator always comes back on Orca regardless of the session's ambient backend resolution.
+Explicit launcher recovery passes the recorded `backend=` explicitly, so a dead Orca coordinator always comes back on Orca regardless of the session's ambient backend resolution.
 
 Retirement teardown for `kind=secondmate` on Orca closes only the recorded coordinator terminal, then removes the home through the same guarded path every secondmate uses; `orca worktree rm` never runs for a home.
 The Orca CLI has no `repo rm`, so a retired home's Orca repo registration lingers in the app's repo list until removed there manually.
@@ -136,7 +136,7 @@ Fake-Orca tests cover:
 - scout teardown releasing an Orca worktree through `orca worktree rm`;
 - ship teardown failing closed when the recorded Orca worktree id is missing, cannot resolve to a path, or resolves to a different path than `worktree=`.
 
-Native secondmate hosting (home adoption, titled-terminal reuse and duplicate prevention, the lsof liveness classifier, recorded-backend sweep recovery, and terminal-only retirement) is covered by `tests/fm-backend-orca-secondmate.test.sh`, with the launcher's native-Orca attach/respawn and stale-lock behavior in `tests/fm-secondmate-launcher.test.sh`.
+Native secondmate hosting (home adoption, titled-terminal reuse and duplicate prevention, the lsof liveness classifier, report-only startup status, and terminal-only retirement) is covered by `tests/fm-backend-orca-secondmate.test.sh`, with the launcher's native-Orca attach/respawn and stale-lock behavior in `tests/fm-secondmate-launcher.test.sh`.
 
 Run the focused suite with:
 

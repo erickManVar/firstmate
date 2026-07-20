@@ -34,7 +34,7 @@ Zellij and Orca are never auto-detected; select them by putting the name in a lo
 Any value other than `tmux`, `herdr`, `zellij`, `orca`, or `cmux` is rejected until another adapter is implemented and verified.
 `fm-spawn.sh` accepts `tmux`, `herdr`, `zellij`, `orca`, and `cmux` for ship and scout tasks; `--secondmate` spawns run on `tmux`, `herdr`, `zellij`, and `orca` (which adopts the provisioned home as its Orca worktree; `docs/orca-backend.md` "Secondmate hosting"), while `backend=cmux` still refuses `--secondmate` until its secondmate launch semantics are designed.
 `codex-app` is not an accepted runtime backend yet; [`docs/codex-app-backend.md`](codex-app-backend.md) owns the Codex App boundary.
-The session-start secondmate liveness sweep uses a deeper `fm_backend_agent_alive` probe where verified.
+The session-start secondmate liveness report uses a deeper `fm_backend_agent_alive` probe where verified.
 Today that probe can classify tmux, herdr, and Orca secondmate endpoints as `alive`, `dead`, or `unknown`; zellij and cmux report `unknown` until their own agent-process classifiers are verified.
 A herdr spawn additionally version-gates against the installed `herdr` binary's protocol and requires `jq`, refusing loudly on an incompatible or missing installation.
 A zellij spawn additionally version-gates against the installed `zellij` binary's version and requires `jq`, refusing loudly when either is missing or the version is older than 0.44.
@@ -124,10 +124,10 @@ Set `FM_SECONDMATE_CHARTER` to seed from inline charter text when no filled char
 Each seed writes an `.fm-secondmate-home` identity marker at the home root.
 The tracked root `.gitignore` ignores that marker, so validation can read it without making a freshly seeded home appear dirty to porcelain-based safety checks.
 This does not relax protection for any other untracked file.
-An existing linked-worktree home that predates this rule advances through its marker-only state during its next bootstrap or spawn local sync, after which Git ignores the marker normally.
-A standalone-clone home cannot receive a primary-local commit through that no-fetch sync, so it receives the rule through `/updatefirstmate`'s origin refresh instead.
+An existing linked-worktree home that predates this rule advances through its marker-only state during an explicit project-local secondmate start or resume, after which Git ignores the marker normally.
+A standalone-clone home receives the rule through `/updatefirstmate`'s origin refresh rather than primary-startup synchronization.
 
-Use `bin/fm-secondmate-fleet.sh status` to inspect every registered persistent coordinator. Use `bin/fm-secondmate-fleet.sh ensure` when you want every project-bearing coordinator live: it attaches to healthy coordinators, recovers only confidently dead ones, and fails closed for an unproven endpoint. Persistent homes do not count as primary in-flight work; each live coordinator guards and supervises its own workers from its own `FM_HOME`.
+Use `bin/fm-secondmate-fleet.sh status` to inspect every registered persistent coordinator. Start or resume one only from its project container with `secondmate <harness>`; fleet status never starts, synchronizes, or nudges a coordinator. Persistent homes do not count as primary in-flight work; each live coordinator guards and supervises its own workers from its own `FM_HOME`.
 
 ## FM_HOME
 
@@ -167,6 +167,7 @@ When the config or override is present, every project line must use this form:
 The project container is the same-named direct child `<projects-root>/<project>` and must be a real non-git directory.
 Every comma-separated repo name is an explicit direct, non-symlink child of that container and must be a Git worktree root.
 Repo order is preserved, duplicate repo names are invalid, and a bare project selector works only when exactly one repo is registered; use `<project>/<repo>` for a multi-repo container.
+A bare repo-name selector is also accepted when it identifies exactly one registered repo across the catalog, so `ggstore-vite` resolves to its registered canonical repo rather than a Secondmate home; ambiguous names such as `api` fail closed and require `<project>/<repo>`.
 The resolver never scans the configured base or a container to invent entries.
 Dot-prefixed names cannot be projects or repos, and `firstmate`, `workspaces`, `projects`, `state`, `data`, and `config` are reserved container names.
 These rules exclude Orca's task worktrees and the colocated `.secondmate` operational home by construction.
@@ -208,7 +209,7 @@ When the harness token is absent or `default`, secondmate launch falls back thro
 An explicit harness argument to `fm-spawn.sh` still overrides either config file for that spawn only.
 An explicit `--model` or `--effort` overrides the matching token from `config/secondmate-harness`; an explicit harness or raw launch command starts with clean model and effort defaults unless those flags are also passed.
 When `config/crew-dispatch.json` exists, crewmate and scout spawns require an explicit resolved harness instead of automatically falling back to `config/crew-harness`.
-The primary propagates `config/crew-dispatch.json`, `config/crew-harness`, `config/backlog-backend`, and `config/projects-root` into secondmate homes at seed or spawn, during the locked session-start bootstrap secondmate sweep, and during explicit `bin/fm-config-push.sh` runs.
+The primary propagates `config/crew-dispatch.json`, `config/crew-harness`, `config/backlog-backend`, and `config/projects-root` into secondmate homes at seed or explicit spawn, and during explicit `bin/fm-config-push.sh` runs.
 `config/secondmate-harness` is not inherited because secondmates do not launch secondmates.
 For grok, `fm-spawn.sh` installs one firstmate-owned global turn-end hook under `$GROK_HOME/hooks/`, or `~/.grok/hooks/` when `GROK_HOME` is unset, and drops a per-task `.fm-grok-turnend` pointer in the worktree, with teardown removing the task token and pointer.
 For Pi secondmate launches, `fm-spawn.sh` starts Pi with `-e` pointed at the secondmate home's own tracked `.pi/extensions/fm-primary-pi-watch.ts` and `.pi/extensions/fm-primary-turnend-guard.ts`, both already present from the secondmate home's git worktree.
@@ -300,19 +301,17 @@ An absent or incompatible `tasks-axi` reports `MISSING: tasks-axi (install: npm 
 An absent `quota-axi` reports `MISSING: quota-axi (install: npm install -g quota-axi)`; `bin/fm-dispatch-select.sh` still degrades to the first profile at runtime when quota data is unavailable.
 Bootstrap also reports a `TANGLE:` line when `FM_ROOT` is on a named non-default branch; follow the printed checkout remediation rather than treating it as an installable tool problem.
 In a read-only session that did not get the fleet lock, the same line is advisory and omits the checkout command.
-The locked session-start bootstrap step also runs a best-effort project clone refresh through `fm-fleet-sync.sh`.
+The locked session-start bootstrap step also runs a best-effort project clone refresh through `fm-fleet-sync.sh` in the primary home only; a home marked `.fm-secondmate-home` skips the startup refresh and delegates canonical clone synchronization to the primary.
 It emits `FLEET_SYNC:` for skipped refreshes that may matter, recovered self-heals, and `STUCK:` alarms.
 Normal completed runs keep local-only and no-origin skips silent.
 If bootstrap kills a timed-out refresh, it replays any completed `fm-fleet-sync.sh` output before the aggregate timeout skip so no finished result is lost.
 A killed refresh (or a teardown process kill) can leave an orphaned `.git/packed-refs.lock` in a clone, which makes the next refresh's fetch fail with Git's `Unable to create '...packed-refs.lock': File exists`.
 On that signature only, `fm-fleet-sync.sh` retries the fetch with a bounded wait for the lock to self-clear, then removes the lock and retries once more only when it can prove the lock stale, exactly like the `fm-teardown.sh` `index.lock` recovery.
 It never removes a live lock, leaves any other failure shape untouched, and prints every wait, retry, and removal to stderr plus a one-line `recovered:` summary to stdout on success so that this session-start relay still surfaces the recovery.
-The locked session-start bootstrap step also runs the guarded local secondmate sync for recorded live secondmate homes, then propagates declared inheritable local config into each validated live home.
-It emits `SECONDMATE_SYNC:` only when a home was skipped for an actionable sync reason or config inheritance failed, and `NUDGE_SECONDMATES:` only when a running home advanced and its instruction surface (`AGENTS.md`, `bin/`, or `.agents/skills/`) changed.
-`NUDGE_SECONDMATES:` lists stable `fm-<id>` task selectors; the `bootstrap-diagnostics` skill owns the send procedure.
-The same bootstrap run also emits `SECONDMATE_LIVENESS:` for live secondmate endpoints: `already-live` and `respawned` are handled states, while `skipped` or `respawn failed` means the secondmate still needs attention.
+The locked session-start bootstrap step never synchronizes, nudges, kills, or resumes a project coordinator.
+It emits `SECONDMATE_LIVENESS:` only for stopped or unproven recorded endpoints, which require explicit project-local inspection or `secondmate <harness>`.
 For a mid-session inherited config edit where tracked-file sync and reread nudges are not needed, run `bin/fm-config-push.sh`.
-It uses the same live secondmate discovery and propagation helper as bootstrap, prints each live home's `crew-dispatch.json`, `crew-harness`, `backlog-backend`, and `projects-root` result as `pushed`, `unchanged`, `skipped`, or `error`, and exits non-zero only for real propagation errors.
+It uses the same live secondmate discovery and propagation helper as the explicit secondmate launch, prints each live home's `crew-dispatch.json`, `crew-harness`, `backlog-backend`, and `projects-root` result as `pushed`, `unchanged`, `skipped`, or `error`, and exits non-zero only for real propagation errors.
 That live discovery starts from `state/*.meta` records with `kind=secondmate`; `data/secondmates.md` only backfills `home=` for older or incomplete meta records.
 Skipped items, such as a destination checkout that does not yet gitignore the item, are visible warnings but not hard failures.
 

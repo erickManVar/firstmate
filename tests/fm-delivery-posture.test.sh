@@ -57,7 +57,7 @@ make_delivery_case() {
 }
 
 read_case_record() {
-  IFS='|' read -r CASE_DIR HOME_DIR PROJ_DIR WT_DIR FAKEBIN_DIR <<EOF
+  IFS='|' read -r _ HOME_DIR _ WT_DIR FAKEBIN_DIR <<EOF
 $1
 EOF
 }

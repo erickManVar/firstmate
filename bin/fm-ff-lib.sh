@@ -6,8 +6,8 @@
 # clean fast-forward, never forcing, merging, or stashing" used by every sync
 # path:
 #   - /updatefirstmate (bin/fm-update.sh) pulls from origin: base_mode "origin".
-#   - the local-HEAD secondmate sync (bin/fm-spawn.sh on launch, bin/fm-bootstrap.sh
-#     on startup) follows the PRIMARY checkout's current default-branch commit:
+#   - the local-HEAD secondmate sync (bin/fm-spawn.sh on explicit launch or resume)
+#     follows the PRIMARY checkout's current default-branch commit:
 #     base_mode is that local commit, with NO fetch and no origin dependency.
 #
 # A linked-worktree secondmate home already holds the primary's commit in the

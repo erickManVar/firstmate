@@ -693,6 +693,38 @@ SH
   pass "bootstrap keeps successful fleet-sync stderr silent"
 }
 
+test_secondmate_bootstrap_skips_fleet_sync() {
+  local case_dir home fake_root fakebin marker out role
+  case_dir="$TMP_ROOT/secondmate-no-fleet-sync"
+  home="$case_dir/home"
+  fake_root="$case_dir/fake-root"
+  marker="$case_dir/fleet-sync-ran"
+  mkdir -p "$home/config" "$home/projects" "$fake_root/bin"
+  printf '%s\n' manual > "$home/config/backlog-backend"
+  printf '%s\n' secondmate > "$home/.fm-secondmate-home"
+  cat > "$fake_root/bin/fm-fleet-sync.sh" <<SH
+#!/usr/bin/env bash
+: > "$marker"
+SH
+  chmod +x "$fake_root/bin/fm-fleet-sync.sh"
+  fakebin=$(make_fake_toolchain "$case_dir")
+
+  for role in absent malformed primary; do
+    rm -f "$home/config/home-role" "$marker"
+    case "$role" in
+      malformed) printf '%s\n' 'secondmate extra' > "$home/config/home-role" ;;
+      primary) printf '%s\n' primary > "$home/config/home-role" ;;
+    esac
+
+    out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$fake_root" \
+      FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
+
+    [ ! -e "$marker" ] || fail "marked secondmate bootstrap ran fleet sync with $role home-role"
+    assert_not_contains "$out" 'FLEET_SYNC:' "marked secondmate bootstrap reported fleet sync with $role home-role"
+  done
+  pass "marked secondmate bootstrap skips fleet sync regardless of home-role"
+}
+
 test_crew_dispatch_active_rules_are_surfaced() {
   local case_dir fakebin out expect
   case_dir="$TMP_ROOT/dispatch-active"
@@ -767,5 +799,6 @@ test_fleet_sync_timeout_empty_override_uses_default
 test_fleet_sync_timeout_is_computed_before_launch
 test_shared_home_role_sync_failure_is_visible
 test_successful_fleet_sync_stderr_remains_silent
+test_secondmate_bootstrap_skips_fleet_sync
 test_crew_dispatch_active_rules_are_surfaced
 test_crew_dispatch_validation

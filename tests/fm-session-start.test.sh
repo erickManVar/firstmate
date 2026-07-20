@@ -6,7 +6,7 @@
 # Coverage:
 #   - absent-file markers vs empty-but-present files in the context digest
 #   - the lock-refusal read-only path: banner leads, every mutating step is
-#     skipped (including bootstrap's four mutating sweeps, verified by their
+#     skipped (including bootstrap's two mutating sweeps, verified by their
 #     ABSENCE), the digest still completes
 #   - output section ordering: diagnostics/banners lead, bulk file dumps follow
 #   - context-aware next-step guidance for read-only, AFK, X mode, and normal
@@ -143,7 +143,9 @@ SH
 
 # make_fake_tmux <fakebin> <live-target>: display-message succeeds only for
 # the given "session:window" target - the exact primitive
-# fm_backend_target_exists uses for a tmux endpoint liveness read.
+# fm_backend_target_probe uses for a tmux endpoint liveness read. A missing
+# target prints real tmux's "can't find window" on stderr, the explicit
+# absence evidence fm_backend_target_state requires to classify `missing`.
 make_fake_tmux() {
   local fakebin=$1 live=$2
   cat > "$fakebin/tmux" <<SH
@@ -158,6 +160,7 @@ case "\${1:-}" in
       prev="\$a"
     done
     [ "\$target" = "$live" ] && { printf '%%1\n'; exit 0; }
+    printf '%s\n' "can't find window" >&2
     exit 1
     ;;
 esac
@@ -177,6 +180,7 @@ make_fake_herdr() {
 set -u
 if [ "\${1:-}" = pane ] && [ "\${2:-}" = get ]; then
   [ "\${3:-}" = "$live" ] && exit 0
+  printf '{"error":{"code":"pane_not_found"}}\n' >&2
   exit 1
 fi
 exit 1
@@ -287,11 +291,8 @@ EOF
   make_fake_toolchain "$fakebin"
   make_fake_ps_claude "$fakebin"
 
-  # A live secondmate meta with a window pointed at nothing real - if the
-  # bootstrap sweep's secondmate_sync ran (a MUTATING step), it would try to
-  # fast-forward this "home" and/or report a SECONDMATE_SYNC/NUDGE_SECONDMATES
-  # line. Absence of any such line is this test's proof that
-  # FM_BOOTSTRAP_DETECT_ONLY=1 actually suppressed the mutating sweep.
+  # A live secondmate meta with a window pointed at nothing real proves that
+  # read-only startup leaves a persistent coordinator untouched.
   mkdir -p "$home/other-secondmate/state"
   fm_write_secondmate_meta "$home/state/sm-x.meta" "$home/other-secondmate" "firstmate:fm-sm-x" alpha
   append_wake "$home/state" signal sm-x "done: surfaced before refusal" || fail "seed wake failed"
@@ -330,11 +331,6 @@ EOF
   # deterministically regardless of what is installed on the test host).
   assert_contains "$out" "MISSING: tasks-axi (install:" "detect-only bootstrap diagnostics did not run on the read-only path"
 
-  # The mutating secondmate sweep must NOT have run: no SECONDMATE_SYNC/
-  # NUDGE_SECONDMATES line, and the sowed secondmate meta's target dir is
-  # untouched (fm-ff-lib would have tried to fast-forward it otherwise).
-  assert_not_contains "$out" "SECONDMATE_SYNC" "mutating secondmate sweep ran during a lock refusal"
-  assert_not_contains "$out" "NUDGE_SECONDMATES" "mutating secondmate sweep ran during a lock refusal"
 
   # The rest of the digest (read-only-safe) still completed.
   assert_contains "$out" "FLEET STATE" "fleet-state digest section missing on the read-only path"
@@ -525,6 +521,30 @@ EOF
   assert_contains "$out" "endpoint: dead (backend=herdr window=sess:p-dead)" "dead herdr endpoint not reported dead"
 
   pass "herdr endpoint liveness is reported per task: alive for a live pane, dead for a gone one"
+}
+
+test_endpoint_liveness_unknown() {
+  local rec root home fakebin out
+  rec=$(new_world liveness-unknown)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  cat > "$fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' 'tmux: command not found' >&2
+exit 1
+SH
+  chmod +x "$fakebin/tmux"
+
+  printf 'window=fm-sess:unknown-window\nkind=ship\n' > "$home/state/task-unknown.meta"
+
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  assert_contains "$out" "endpoint: unknown (backend=tmux window=fm-sess:unknown-window)" "unproven tmux endpoint was not reported unknown"
+  assert_not_contains "$out" "endpoint: dead (backend=tmux window=fm-sess:unknown-window)" "unproven tmux endpoint was reported dead"
+
+  pass "session digest preserves unknown endpoint probes"
 }
 
 # --- composition: real scripts run, not reimplemented ------------------------
@@ -752,6 +772,7 @@ test_status_tail_bounding
 test_orphan_status_logs_are_printed
 test_endpoint_liveness_tmux
 test_endpoint_liveness_herdr
+test_endpoint_liveness_unknown
 test_composition_invokes_real_scripts
 test_fleet_digest_empty_fleet
 test_next_step_sources_x_mode_cadence

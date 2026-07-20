@@ -17,7 +17,7 @@
 #      and config/backlog-backend - down into each secondmate home's config/, so
 #      the secondmate's OWN crewmates, dispatch profiles, and backlog backend
 #      inherit the primary's settings. It is primary-authoritative (re-pushed at
-#      secondmate spawn, on the bootstrap secondmate sweep, and by config push).
+#      secondmate spawn and by explicit config push).
 #      config/secondmate-harness is deliberately NOT inherited (secondmates do
 #      not spawn secondmates).
 #   C) Model/effort pin. config/secondmate-harness may carry optional model and
@@ -784,144 +784,6 @@ run_config_push() {
     "$ROOT/bin/fm-config-push.sh"
 }
 
-# The sweep pushes the primary's inheritable config into a live home, re-converges
-# it when the primary changes it, and mirrors absence when the primary clears it -
-# all while never inheriting secondmate-harness.
-test_bootstrap_sweep_propagates_and_reconverges() {
-  local w c1
-  w=$(new_world boot-prop)
-  c1=$(git -C "$w/main" rev-parse HEAD)
-  add_sm_worktree "$w" sm "$c1"
-
-  # Initial push: primary crew-harness=codex, secondmate-harness=grok (must NOT flow).
-  printf '{"default":{"harness":"codex"}}\n' > "$w/home/config/crew-dispatch.json"
-  printf 'codex\n' > "$w/home/config/crew-harness"
-  printf 'manual\n' > "$w/home/config/backlog-backend"
-  printf 'grok\n' > "$w/home/config/secondmate-harness"
-  run_bootstrap "$w" >/dev/null
-  [ "$(cat "$w/sm/config/crew-harness" 2>/dev/null)" = codex ] \
-    || fail "sweep: crew-harness not pushed into the live home"
-  [ "$(cat "$w/sm/config/crew-dispatch.json" 2>/dev/null)" = '{"default":{"harness":"codex"}}' ] \
-    || fail "sweep: crew-dispatch.json not pushed into the live home"
-  [ "$(cat "$w/sm/config/backlog-backend" 2>/dev/null)" = manual ] \
-    || fail "sweep: backlog-backend not pushed into the live home"
-  [ -e "$w/sm/config/secondmate-harness" ] \
-    && fail "sweep: secondmate-harness was inherited (must not be)"
-
-  # Re-converge: primary changes inheritable values; the home follows on the next sweep.
-  printf '{"default":{"harness":"claude"}}\n' > "$w/home/config/crew-dispatch.json"
-  printf 'claude\n' > "$w/home/config/crew-harness"
-  printf 'tasks-axi\n' > "$w/home/config/backlog-backend"
-  run_bootstrap "$w" >/dev/null
-  [ "$(cat "$w/sm/config/crew-harness" 2>/dev/null)" = claude ] \
-    || fail "sweep: home did not re-converge to the primary's new crew-harness"
-  [ "$(cat "$w/sm/config/crew-dispatch.json" 2>/dev/null)" = '{"default":{"harness":"claude"}}' ] \
-    || fail "sweep: home did not re-converge to the primary's new crew-dispatch.json"
-  [ "$(cat "$w/sm/config/backlog-backend" 2>/dev/null)" = tasks-axi ] \
-    || fail "sweep: home did not re-converge to the primary's new backlog-backend"
-
-  # Mirror absence: primary clears inheritable config; the home's copies are removed.
-  rm -f "$w/home/config/crew-dispatch.json" "$w/home/config/crew-harness" "$w/home/config/backlog-backend"
-  run_bootstrap "$w" >/dev/null
-  [ -e "$w/sm/config/crew-dispatch.json" ] \
-    && fail "sweep: home crew-dispatch.json not removed after the primary cleared it"
-  [ -e "$w/sm/config/crew-harness" ] \
-    && fail "sweep: home crew-harness not removed after the primary cleared it"
-  [ -e "$w/sm/config/backlog-backend" ] \
-    && fail "sweep: home backlog-backend not removed after the primary cleared it"
-  pass "B7 bootstrap sweep pushes, re-converges, and mirrors absence; never inherits secondmate-harness"
-}
-
-# Convergence is independent of the tracked-files fast-forward: a home already
-# current on tracked files still receives a config change.
-test_bootstrap_sweep_propagates_when_tracked_current() {
-  local w head
-  w=$(new_world boot-prop-current)
-  head=$(git -C "$w/main" rev-parse HEAD)
-  add_sm_worktree "$w" sm "$head"   # already on the primary's HEAD (ff is a no-op)
-
-  printf '{"default":{"harness":"codex"}}\n' > "$w/home/config/crew-dispatch.json"
-  printf 'codex\n' > "$w/home/config/crew-harness"
-  printf 'manual\n' > "$w/home/config/backlog-backend"
-  run_bootstrap "$w" >/dev/null
-  [ "$(cat "$w/sm/config/crew-dispatch.json" 2>/dev/null)" = '{"default":{"harness":"codex"}}' ] \
-    || fail "crew-dispatch.json did not propagate to a tracked-current home"
-  [ "$(cat "$w/sm/config/crew-harness" 2>/dev/null)" = codex ] \
-    || fail "config did not propagate to a tracked-current home"
-  [ "$(cat "$w/sm/config/backlog-backend" 2>/dev/null)" = manual ] \
-    || fail "backlog-backend did not propagate to a tracked-current home"
-  pass "B8 bootstrap sweep propagates config even when the home's tracked files are already current"
-}
-
-test_bootstrap_sweep_defers_dispatch_on_stale_unignored_home() {
-  local w out status
-  w=$(new_world boot-stale-dispatch no)
-  add_sm_worktree "$w" sm "$(git -C "$w/main" rev-parse HEAD)"
-  printf 'local divergence\n' >> "$w/sm/README.md"
-  git -C "$w/sm" add README.md
-  git -C "$w/sm" commit -qm local
-  printf 'config/crew-dispatch.json\n' >> "$w/main/.gitignore"
-  git -C "$w/main" add .gitignore
-  git -C "$w/main" commit -qm c2
-
-  printf '{"default":{"harness":"codex"}}\n' > "$w/home/config/crew-dispatch.json"
-  printf 'codex\n' > "$w/home/config/crew-harness"
-  printf 'manual\n' > "$w/home/config/backlog-backend"
-  out=$(run_bootstrap "$w")
-
-  assert_contains "$out" "SECONDMATE_SYNC: secondmate sm: skipped: diverged from" \
-    "stale dispatch: expected fast-forward skip"
-  [ ! -e "$w/sm/config/crew-dispatch.json" ] \
-    || fail "stale dispatch: crew-dispatch.json was copied before the home ignored it"
-  [ "$(cat "$w/sm/config/crew-harness" 2>/dev/null)" = codex ] \
-    || fail "stale dispatch: existing ignored config stopped propagating"
-  [ "$(cat "$w/sm/config/backlog-backend" 2>/dev/null)" = manual ] \
-    || fail "stale dispatch: backlog backend stopped propagating"
-  status=$(git -C "$w/sm" status --porcelain -- config/crew-dispatch.json)
-  [ -z "$status" ] || fail "stale dispatch: crew-dispatch.json dirtied the home: $status"
-  pass "B9 bootstrap sweep defers new inherited config until the home ignores it"
-}
-
-# Backward-compat: with no inheritable config set, the sweep is a no-op for the
-# home's config/ - exactly as before this feature - and ordinary sweep behavior
-# (fast-forward) is unaffected.
-test_bootstrap_sweep_no_inheritance_is_noop() {
-  local w c1
-  w=$(new_world boot-noop)
-  c1=$(git -C "$w/main" rev-parse HEAD)
-  add_sm_worktree "$w" sm "$c1"
-  # Advance the primary so the sweep has a real fast-forward to perform.
-  printf 'v2\n' > "$w/main/AGENTS.md"
-  git -C "$w/main" add -A
-  git -C "$w/main" commit -qm c2
-  local head
-  head=$(git -C "$w/main" rev-parse HEAD)
-
-  run_bootstrap "$w" >/dev/null
-
-  [ -e "$w/sm/config/crew-dispatch.json" ] && fail "no-inheritance sweep created a home crew-dispatch.json"
-  [ -e "$w/sm/config/crew-harness" ] && fail "no-inheritance sweep created a home crew-harness"
-  [ -e "$w/sm/config" ] && fail "no-inheritance sweep created a home config/ dir"
-  [ "$(git -C "$w/sm" rev-parse HEAD)" = "$head" ] \
-    || fail "no-inheritance sweep did not still fast-forward the tracked files"
-  pass "B10 bootstrap sweep with no inheritable config is a config no-op and still fast-forwards"
-}
-
-test_bootstrap_sweep_surfaces_config_propagation_failure() {
-  local w c1 out fail_line
-  w=$(new_world boot-prop-fail)
-  c1=$(git -C "$w/main" rev-parse HEAD)
-  add_sm_worktree "$w" sm "$c1"
-  mkdir -p "$w/sm/config/crew-harness"
-
-  out=$(run_bootstrap "$w")
-
-  fail_line=$(printf '%s\n' "$out" | grep '^SECONDMATE_SYNC: secondmate sm: skipped: config inheritance failed' || true)
-  [ -n "$fail_line" ] || fail "bootstrap did not surface config propagation failure (got: $out)"
-  [ -d "$w/sm/config/crew-harness" ] || fail "failed propagation removed the wrong path"
-  pass "B11 bootstrap sweep surfaces config propagation failures"
-}
-
 test_config_push_propagates_reports_without_ff_or_nudge() {
   local w c1 sm_real old_head out err status out2 tmp
   w=$(new_world config-push-basic)
@@ -1057,11 +919,6 @@ test_spawn_explicit_effort_overrides_secondmate_harness_token
 test_spawn_explicit_harness_does_not_inherit_secondmate_harness_tokens
 test_spawn_explicit_harness_uses_explicit_profile_axes
 test_spawn_fallback_chain_and_crew_scout_unaffected
-test_bootstrap_sweep_propagates_and_reconverges
-test_bootstrap_sweep_propagates_when_tracked_current
-test_bootstrap_sweep_defers_dispatch_on_stale_unignored_home
-test_bootstrap_sweep_no_inheritance_is_noop
-test_bootstrap_sweep_surfaces_config_propagation_failure
 test_config_push_propagates_reports_without_ff_or_nudge
 test_config_push_reports_skips_dirty_and_invalid_home
 test_config_push_exits_nonzero_on_copy_error

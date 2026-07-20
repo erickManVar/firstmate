@@ -12,33 +12,12 @@
 #                 "FLEET_SYNC: <repo>: skipped|recovered|STUCK: <detail>",
 #                 "FLEET_SYNC: <fleet-sync failure detail>",
 #                 "TASKS_AXI: available", "TANGLE: <remediation>",
-#                 "SECONDMATE_SYNC: secondmate <id>: skipped: <reason>",
-#                 "NUDGE_SECONDMATES: fm-<id>...",
-#                 "SECONDMATE_LIVENESS: secondmate <id>: already-live|respawned|skipped: <reason>|respawn failed: <reason>",
+#                 "SECONDMATE_LIVENESS: secondmate <id>: stopped|liveness unproven",
 #                 "FMX: X mode on ..." or "FMX: X mode off ...".
-#          A NUDGE_SECONDMATES line lists the RUNNING secondmate task selectors
-#          (fm-<id>) whose worktree was fast-forwarded to firstmate's own
-#          current default-branch commit (a purely LOCAL fast-forward, never an
-#          origin fetch) AND whose instruction surface (AGENTS.md, bin/, or
-#          .agents/skills/) actually changed; firstmate nudges each via
-#          bin/fm-send.sh fm-<id> so meta resolves the current backend target
-#          even when the same bootstrap run also respawned the secondmate.
-#          Already-current or no-instruction-change homes are silently left alone.
-#          The secondmate sweep also propagates declared inheritable local config
-#          into each validated live secondmate home.
-#          SECONDMATE_SYNC lines report actionable skipped local-HEAD syncs or
-#          config-inheritance failures for live secondmate homes; no-op/current
-#          and successful updates stay quiet.
-#          SECONDMATE_LIVENESS lines report every live secondmate's deeper
-#          agent-liveness verdict (bin/fm-backend.sh's fm_backend_agent_alive,
-#          distinct from the endpoint pane-presence check): already-live is a
-#          no-op, respawned means a confirmed-dead endpoint (a bare shell left
-#          behind by an exited secondmate agent) was killed and relaunched via
-#          bin/fm-spawn.sh --secondmate, and skipped means the probe could not
-#          confidently classify the endpoint (never acted on - a false-dead
-#          reading would spin up a duplicate agent). Session-start scope only;
-#          see AGENTS.md "Session start" and docs/tmux-backend.md /
-#          docs/herdr-backend.md "Agent liveness probe" for the empirical basis.
+#          SECONDMATE_LIVENESS lines report only a coordinator that needs an
+#          explicit project-local resume. Healthy endpoints are already in the
+#          session-start fleet digest and remain quiet. This is read-only:
+#          persistent homes are independent from live coordinator processes.
 #          A TANGLE line means the firstmate primary checkout (FM_ROOT) is stranded
 #          on a feature branch instead of its default branch - a crewmate's work
 #          landed in the primary instead of its own worktree; restore it per the line.
@@ -66,14 +45,14 @@
 #          refresh relays any completed fm-fleet-sync.sh output before the
 #          aggregate timeout skip line with timeout and elapsed seconds.
 #          Set FM_FLEET_PRUNE=0 to skip branch pruning during that refresh.
-#          Set FM_BOOTSTRAP_DETECT_ONLY=1 to skip the four MUTATING sweeps
-#          (secondmate_sync, secondmate_liveness_sweep, x_mode_setup,
+#          Set FM_BOOTSTRAP_DETECT_ONLY=1 to skip the two MUTATING sweeps
+#          (x_mode_setup,
 #          fleet_sync) while still printing every read-only detect line
 #          above; the TANGLE line switches to advisory-only wording with no
 #          checkout command. Used by
 #          fm-session-start.sh's read-only path when another live session holds
 #          the fleet lock, so a second concurrent session never race-mutates
-#          secondmate homes, X-mode artifacts, project clones, or repair
+#          X-mode artifacts, project clones, or repair
 #          instructions. Unset/0 (the default) runs every sweep exactly as
 #          before - this flag is purely additive.
 #        fm-bootstrap.sh install <tool>...
@@ -209,134 +188,43 @@ fleet_sync() {
   rm -f "$tmp" "$err"
 }
 
-secondmate_sync() {
-  # Local-HEAD secondmate sync: fast-forward every LIVE secondmate home
-  # to the primary checkout's current default-branch commit. No network/origin
-  # dependency: a linked-worktree home already holds the primary's commit, while a
-  # standalone clone missing it has the commit acquired from the trusted local
-  # primary repository over the filesystem (fm-ff-lib.sh), then the same ff-only
-  # guards apply. Emits NUDGE_SECONDMATES:
-  # only for RUNNING secondmates whose instruction surface (AGENTS.md, bin/, or
-  # .agents/skills/) actually changed, so a secondmate already on the primary's
-  # version is never disturbed (AGENTS.md bootstrap + supervision). Mirrors
-  # fm-update's nudge-secondmates: report so firstmate can live-converge the
-  # listed fm-<id> selectors.
-  [ -d "$STATE" ] || return 0
-  local primary_head
-  if ! primary_head=$(primary_head_commit "$FM_ROOT"); then
-    local meta id
-    for meta in "$STATE"/*.meta; do
-      [ -f "$meta" ] || continue
-      grep -q '^kind=secondmate' "$meta" 2>/dev/null || continue
-      id=$(basename "$meta" .meta)
-      echo "SECONDMATE_SYNC: secondmate $id: skipped: primary default-branch commit cannot be resolved"
-    done
-    return 0
-  fi
-  FF_NUDGE_WINDOWS=""
-  FF_SEEN_HOMES=""
-  local tmp line
-  tmp=$(mktemp "${TMPDIR:-/tmp}/fm-secondmate-sync.XXXXXX" 2>/dev/null) || return 0
-  sweep_live_secondmate_metas "$STATE" "$primary_head" yes >"$tmp"
-  while IFS= read -r line; do
-    case "$line" in
-      secondmate\ *': skipped:'*) echo "SECONDMATE_SYNC: $line" ;;
-    esac
-  done < "$tmp"
-  rm -f "$tmp"
-  # Inheritable-config propagation: push the primary's declared LOCAL config
-  # into every VALIDATED live secondmate home swept
-  # above (FF_SEEN_HOMES is exactly that set). config/ is gitignored, so this is a
-  # separate copy from the tracked-files fast-forward; primary-authoritative, so
-  # it runs whether or not the home's tracked files advanced, keeping the fleet
-  # converged on the primary. The propagation helper stays silent on success; a
-  # primary with no inheritable config set and no downstream copy is a no-op.
-  local id home home_real propagated_homes
-  propagated_homes=""
-  while IFS='|' read -r id home _window _meta; do
-    validate_secondmate_home "$id" "$home" || continue
-    home_real="$VALIDATED_HOME"
-    case " $FF_SEEN_HOMES " in
-      *" $home_real "*) ;;
-      *) continue ;;
-    esac
-    case " $propagated_homes " in
-      *" $home_real "*) continue ;;
-    esac
-    propagated_homes="$propagated_homes $home_real"
-    if ! propagate_inheritable_config "$CONFIG" "$home_real/config"; then
-      echo "SECONDMATE_SYNC: secondmate $id: skipped: config inheritance failed"
-    fi
-  done < <(live_secondmate_meta_records "$STATE" "$FM_HOME/data/secondmates.md")
-  [ -n "$FF_NUDGE_WINDOWS" ] && echo "NUDGE_SECONDMATES:$FF_NUDGE_WINDOWS"
-  return 0
-}
-
 secondmate_liveness_sweep() {
-  # Idempotent secondmate liveness guarantee - SESSION START ONLY. A
-  # secondmate agent that has exited leaves its backend endpoint alive as a
-  # bare shell; the session-start digest's "endpoint: alive" read
-  # (fm_backend_target_exists, pane-PRESENCE only) reports that shell as
-  # alive, so recovery never respawns it, and the watcher deliberately exempts
-  # secondmates from stale-pane detection (an idle secondmate pane is healthy
-  # by design). Evidence 2026-07-07: every secondmate in this fleet was found
-  # as a dead zsh shell, invisible to every existing check. This sweep closes
-  # the gap deterministically: for every LIVE secondmate meta (kind=secondmate
-  # with a recorded window=), run the deeper fm_backend_agent_alive probe
-  # (bin/fm-backend.sh) and act only on a CONFIDENT verdict:
-  #   alive   - no-op.
-  #   dead    - kill the stale endpoint first (best-effort; the tmux adapter
-  #             refuses to create a same-named window over a live one) then
-  #             respawn via the existing recovery path (bin/fm-spawn.sh <id>
-  #             --secondmate; secondmate-provisioning).
-  #   unknown - NEVER acted on. A false-dead reading would spin up a DUPLICATE
-  #             agent (two supervisors in one home); a false-alive reading
-  #             merely leaves today's bug unfixed for one more sweep. The
-  #             worse direction is guarded by never treating anything less
-  #             than a confident dead reading as license to respawn.
-  # A meta with no recorded window= at all is left to the existing "meta with
-  # no window" recovery path (AGENTS.md section 5 / secondmate-provisioning);
-  # there is no endpoint here for this probe to read.
-  # Naturally scoped to the primary: a secondmate's own state/ never holds
-  # kind=secondmate metas (secondmates never spawn secondmates), so this
-  # sweep is a silent no-op there, exactly like secondmate_sync above.
-  # Scope: session start (reboot/restart) only. A secondmate dying
-  # MID-SESSION is a harder follow-on needing a periodic liveness beacon -
-  # explicitly out of scope here.
+  # Read-only secondmate liveness report. Primary startup must never revive,
+  # close, synchronize, or clean up an idle coordinator. A project-local
+  # `secondmate <harness>` invocation is the only normal resume path.
   [ -d "$STATE" ] || return 0
-  local meta id window harness backend target verdict out
+  local meta id window backend target endpoint_state verdict
   for meta in "$STATE"/*.meta; do
     [ -f "$meta" ] || continue
     grep -q '^kind=secondmate$' "$meta" 2>/dev/null || continue
     id=$(basename "$meta" .meta)
     window=$(fm_meta_get "$meta" window)
-    [ -n "$window" ] || continue
-    harness=$(fm_meta_get "$meta" harness)
+    if [ -z "$window" ]; then
+      echo "SECONDMATE_LIVENESS: secondmate $id: stopped"
+      continue
+    fi
     backend=$(fm_backend_of_meta "$meta")
     target=$(fm_backend_target_of_meta "$meta")
     [ -n "$target" ] || target="$window"
-    verdict=$(fm_backend_agent_alive "$backend" "$target" 2>/dev/null) || verdict="unknown"
-    case "$harness" in
-      claude|codex|opencode|pi|grok) ;;
-      *) [ "$verdict" = dead ] && verdict=unknown ;;
-    esac
-    case "$verdict" in
-      alive)
-        echo "SECONDMATE_LIVENESS: secondmate $id: already-live"
+    endpoint_state=$(fm_backend_target_state "$backend" "$target" "fm-$id")
+    case "$endpoint_state" in
+      missing)
+        echo "SECONDMATE_LIVENESS: secondmate $id: stopped"
+        continue
         ;;
+      exists) ;;
+      *)
+        echo "SECONDMATE_LIVENESS: secondmate $id: liveness unproven"
+        continue
+        ;;
+    esac
+    verdict=$(fm_backend_agent_alive "$backend" "$target" 2>/dev/null) || verdict="unknown"
+    case "$verdict" in
       dead)
-        fm_backend_kill "$backend" "$target" 2>/dev/null || true
-        # Respawn on the RECORDED backend (absent backend= means tmux), never
-        # the ambient resolution: a dead Orca-hosted coordinator must come
-        # back on Orca even if this session would resolve a different backend.
-        if out=$(FM_SPAWN_NO_GUARD=1 "$FM_ROOT/bin/fm-spawn.sh" "$id" --secondmate --backend "$backend" 2>&1); then
-          echo "SECONDMATE_LIVENESS: secondmate $id: respawned"
-        else
-          echo "SECONDMATE_LIVENESS: secondmate $id: respawn failed: $(first_line "$out")"
-        fi
+        echo "SECONDMATE_LIVENESS: secondmate $id: stopped"
         ;;
       *)
-        echo "SECONDMATE_LIVENESS: secondmate $id: skipped: liveness probe inconclusive (backend=$backend)"
+        [ "$verdict" = alive ] || echo "SECONDMATE_LIVENESS: secondmate $id: liveness unproven"
         ;;
     esac
   done
@@ -662,10 +550,11 @@ crew_dispatch_validate
 if ! fm_backlog_backend_manual "$CONFIG" && fm_tasks_axi_compatible; then
   echo "TASKS_AXI: available"
 fi
+secondmate_liveness_sweep
 if [ "${FM_BOOTSTRAP_DETECT_ONLY:-0}" != 1 ]; then
-  secondmate_sync
-  secondmate_liveness_sweep
   x_mode_setup
-  fleet_sync
+  if [ ! -f "$FM_HOME/.fm-secondmate-home" ]; then
+    fleet_sync
+  fi
 fi
 exit 0

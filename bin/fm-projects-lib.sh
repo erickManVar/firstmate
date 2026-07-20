@@ -420,8 +420,42 @@ EOF
   return 1
 }
 
+# Resolve a bare registered repo name in a shared project-container catalog.
+# Accept it only when one registry entry owns the name; never guess across
+# containers that share a repo leaf such as "api".
+fm_project_path_by_repo_name() {
+  local wanted=$1 names project paths path found count
+  [ "$(fm_projects_mode)" = shared-external ] || return 1
+  fm_project_repo_name_valid "$wanted" || return 1
+  names=$(fm_project_registry_names) || return
+  found=
+  count=0
+  while IFS= read -r project; do
+    [ -n "$project" ] || continue
+    paths=$(fm_project_repo_paths "$project") || return
+    while IFS= read -r path; do
+      [ -n "$path" ] || continue
+      [ "${path##*/}" = "$wanted" ] || continue
+      found=$path
+      count=$((count + 1))
+    done <<EOF
+$paths
+EOF
+  done <<EOF
+$names
+EOF
+  case "$count" in
+    1) printf '%s\n' "$found" ;;
+    0) return 1 ;;
+    *)
+      fm_projects_error "repo selector $wanted is ambiguous across registered projects; use <project>/<repo>"
+      return 2
+      ;;
+  esac
+}
+
 fm_project_resolve_arg() {
-  local arg=$1 selector project repo path normalized container repos names
+  local arg=$1 selector project repo path normalized container repos names leaf_status
   selector=$arg
   case "$selector" in
     projects/*) selector=${selector#projects/} ;;
@@ -442,6 +476,17 @@ fm_project_resolve_arg() {
     esac
   fi
   if [ "$(fm_projects_mode)" = shared-external ]; then
+    if [ "$selector" = "$project" ]; then
+      if path=$(fm_project_path_by_repo_name "$selector"); then
+        leaf_status=0
+      else
+        leaf_status=$?
+      fi
+      case "$leaf_status" in
+        0) printf '%s\n' "$path"; return ;;
+        2) return 1 ;;
+      esac
+    fi
     normalized=$(fm_projects_normalize_path "$arg") || return
     names=$(fm_project_registry_names) || return
     while IFS= read -r project; do
@@ -473,7 +518,7 @@ EOF
 }
 
 fm_project_name_from_arg() {
-  local arg=$1 selector project repo
+  local arg=$1 selector project repo path leaf_status
   selector=$arg
   case "$selector" in
     projects/*) selector=${selector#projects/} ;;
@@ -493,6 +538,17 @@ fm_project_name_from_arg() {
           return
         fi
         ;;
+      esac
+  fi
+  if [ "$(fm_projects_mode)" = shared-external ] && [ "$selector" = "$project" ]; then
+    if path=$(fm_project_path_by_repo_name "$selector"); then
+      leaf_status=0
+    else
+      leaf_status=$?
+    fi
+    case "$leaf_status" in
+      0) fm_project_name_for_path "$path"; return ;;
+      2) return 1 ;;
     esac
   fi
   fm_project_name_for_path "$arg"

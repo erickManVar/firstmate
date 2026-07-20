@@ -381,6 +381,44 @@ fm_backend_zellij_target_ready() {  # <target> [expected-label]
   fm_backend_zellij_pane_exists "$FM_BACKEND_ZELLIJ_SESSION" "$FM_BACKEND_ZELLIJ_PANE"
 }
 
+fm_backend_zellij_target_state() {  # <target> [expected-label] -> exists|missing|unknown
+  local target=$1 expected_label=${2:-} sessions panes tab_id
+  fm_backend_zellij_parse_target "$target" || { printf 'unknown'; return 0; }
+  case "$FM_BACKEND_ZELLIJ_PANE" in
+    ''|*[!0-9]*) printf 'unknown'; return 0 ;;
+  esac
+  if ! sessions=$(zellij list-sessions --short --no-formatting 2>&1); then
+    printf 'unknown'
+    return 0
+  fi
+  if ! printf '%s\n' "$sessions" | grep -qxF "$FM_BACKEND_ZELLIJ_SESSION"; then
+    printf 'missing'
+    return 0
+  fi
+  if ! panes=$(fm_backend_zellij_cli "$FM_BACKEND_ZELLIJ_SESSION" action list-panes --json 2>&1); then
+    printf 'unknown'
+    return 0
+  fi
+  if ! printf '%s' "$panes" | jq -e 'type == "array"' >/dev/null 2>&1; then
+    printf 'unknown'
+    return 0
+  fi
+  if ! printf '%s' "$panes" | jq -e --argjson p "$FM_BACKEND_ZELLIJ_PANE" \
+    '[.[]? | select(.id == $p and .is_plugin == false)] | length > 0' >/dev/null 2>&1; then
+    printf 'missing'
+    return 0
+  fi
+  if [ -n "$expected_label" ]; then
+    tab_id=$(printf '%s' "$panes" | jq -r --argjson p "$FM_BACKEND_ZELLIJ_PANE" \
+      '.[]? | select(.id == $p and .is_plugin == false) | .tab_id' 2>/dev/null | head -1)
+    if [ -z "$tab_id" ] || ! fm_backend_zellij_tab_matches_label "$FM_BACKEND_ZELLIJ_SESSION" "$tab_id" "$expected_label"; then
+      printf 'unknown'
+      return 0
+    fi
+  fi
+  printf 'exists'
+}
+
 # fm_backend_zellij_current_path: the live pane's cwd, or empty on any error.
 # Mirrors tmux's pane_current_path poll used for worktree-path discovery after
 # `treehouse get`.
