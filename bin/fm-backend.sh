@@ -643,23 +643,24 @@ fm_backend_composer_state() {  # <backend> <target> -> empty|pending|unknown
   esac
 }
 
-# fm_backend_target_exists: cheap, READ-ONLY existence check - does the
+# fm_backend_target_probe: cheap, READ-ONLY endpoint probe - does the
 # recorded TARGET endpoint still exist on BACKEND? Never starts a server or
 # session: for herdr this deliberately queries the pane directly instead of
 # going through fm_backend_herdr_target_ready (which auto-starts the herdr
 # server as a side effect via fm_backend_herdr_server_ensure - fine for an
 # operation that is about to use the pane, wrong for a passive liveness
 # probe). A gone tmux window or an unqueryable herdr pane (server down, pane
-# closed), missing zellij pane, or unreadable Orca terminal simply fails, which
-# IS "does not exist" for this purpose.
+# closed), missing zellij pane, or unreadable Orca terminal can fail. Callers
+# that need to distinguish confirmed absence from a probe failure must use
+# fm_backend_target_state below.
 # Mirrors fm-crew-state.sh's pane_readable check; exists here as one shared
 # primitive so callers that only need a fast alive/dead read (recovery
 # digests, the session-start fleet digest) do not re-derive it inline.
-fm_backend_target_exists() {  # <backend> <target> [expected-label]
+fm_backend_target_probe() {  # <backend> <target> [expected-label]
   local backend=$1 target=$2 expected_label=${3:-} session pane
   case "$backend" in
     tmux)
-      tmux display-message -p -t "$target" '#{pane_id}' >/dev/null 2>&1
+      tmux display-message -p -t "$target" '#{pane_id}' >/dev/null
       ;;
     herdr)
       fm_backend_source herdr || return 1
@@ -674,7 +675,7 @@ fm_backend_target_exists() {  # <backend> <target> [expected-label]
       # flag on top, so this check is correctly scoped even when the caller's
       # own ambient session (e.g. the primary firstmate's default session) is
       # a DIFFERENT one than the target's.
-      fm_backend_herdr_cli "$session" pane get "$pane" >/dev/null 2>&1
+      fm_backend_herdr_cli "$session" pane get "$pane" >/dev/null
       ;;
     zellij)
       fm_backend_source zellij || return 1
@@ -682,7 +683,7 @@ fm_backend_target_exists() {  # <backend> <target> [expected-label]
       ;;
     orca)
       fm_backend_source orca || return 1
-      fm_backend_orca_capture "$target" 1 >/dev/null 2>&1
+      fm_backend_orca_capture "$target" 1 >/dev/null
       ;;
     cmux)
       fm_backend_source cmux || return 1
@@ -692,6 +693,28 @@ fm_backend_target_exists() {  # <backend> <target> [expected-label]
       return 1
       ;;
   esac
+}
+
+# fm_backend_target_state: classify a passive endpoint probe without treating
+# an unavailable backend or query error as evidence that the endpoint is gone.
+# Prints exists, missing, or unknown. "missing" is deliberately conservative:
+# only backend output that explicitly identifies an absent target reaches it.
+fm_backend_target_state() {  # <backend> <target> [expected-label]
+  local output
+  if output=$(fm_backend_target_probe "$@" 2>&1); then
+    printf 'exists'
+    return 0
+  fi
+  case "$output" in
+    *"can't find "*|*"not found"*|*"No such"*|*"no such"*|*"does not exist"*) printf 'missing' ;;
+    *) printf 'unknown' ;;
+  esac
+}
+
+# fm_backend_target_exists: compatibility predicate for callers that only need
+# a fast endpoint-presence check.
+fm_backend_target_exists() {  # <backend> <target> [expected-label]
+  [ "$(fm_backend_target_state "$@")" = exists ]
 }
 
 # fm_backend_agent_alive: CONFIDENT liveness of a live harness-agent PROCESS

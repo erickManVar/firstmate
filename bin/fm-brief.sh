@@ -191,7 +191,8 @@ Do not invent a second delegation system.
 Meaningful ship work needs a recorded delivery posture before dispatch: \`rapid-local\` (local delivery with focused validation and no PR) or \`peer-ship\` (full validation and the PR gate through the registered mode), scaffolded with \`bin/fm-brief.sh ... --delivery <posture>\`.
 When a routed request supplies no posture, escalate \`needs-decision:\` with the two options via the status path below instead of guessing.
 You do not generate your own work.
-Act only on tasks the main firstmate routes to you.
+Act only on tasks the captain explicitly assigns within the registered project scope above or the main firstmate routes to you.
+The main firstmate owns cross-project, fleet-wide, and shared Firstmate work; escalate those requests instead of taking them on.
 Never start a survey, audit, or "find improvements" sweep on your own initiative; that is not your job and it is unwanted.
 
 # Requests from the main firstmate
@@ -201,7 +202,8 @@ A request relayed to you by the main firstmate (your supervisor) is tagged with 
 When a message carries that marker, do the work, then respond via the STATUS/ESCALATION path below, never only in this chat: the main firstmate does not read your chat, so a chat-only reply is lost.
 For a terse result, a status line is the whole answer.
 For a detailed answer (an investigation, a plan, an audit), write it to a doc under your home's \`data/\` and append a status line that points to that doc - the scout-report pattern - so the main firstmate is woken and can read it.
-A message with NO marker is the captain typing directly into your pane: treat it as authoritative captain intervention and stay conversational exactly as you would for any captain message; do not force it onto the status path.
+A message with NO marker is the captain typing directly into your pane: treat it as an authoritative assignment when it stays within your registered project scope, stay conversational exactly as you would for any captain message, and do not force it onto the status path.
+Route cross-project, fleet-wide, and shared Firstmate requests back to the main firstmate through the status path.
 
 # Escalation to main firstmate
 Handle routine work yourself.

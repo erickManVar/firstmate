@@ -193,7 +193,7 @@ secondmate_liveness_sweep() {
   # close, synchronize, or clean up an idle coordinator. A project-local
   # `secondmate <harness>` invocation is the only normal resume path.
   [ -d "$STATE" ] || return 0
-  local meta id window backend target verdict
+  local meta id window backend target endpoint_state verdict
   for meta in "$STATE"/*.meta; do
     [ -f "$meta" ] || continue
     grep -q '^kind=secondmate$' "$meta" 2>/dev/null || continue
@@ -206,10 +206,18 @@ secondmate_liveness_sweep() {
     backend=$(fm_backend_of_meta "$meta")
     target=$(fm_backend_target_of_meta "$meta")
     [ -n "$target" ] || target="$window"
-    if ! fm_backend_target_exists "$backend" "$target" "fm-$id"; then
-      echo "SECONDMATE_LIVENESS: secondmate $id: stopped"
-      continue
-    fi
+    endpoint_state=$(fm_backend_target_state "$backend" "$target" "fm-$id")
+    case "$endpoint_state" in
+      missing)
+        echo "SECONDMATE_LIVENESS: secondmate $id: stopped"
+        continue
+        ;;
+      exists) ;;
+      *)
+        echo "SECONDMATE_LIVENESS: secondmate $id: liveness unproven"
+        continue
+        ;;
+    esac
     verdict=$(fm_backend_agent_alive "$backend" "$target" 2>/dev/null) || verdict="unknown"
     case "$verdict" in
       dead)

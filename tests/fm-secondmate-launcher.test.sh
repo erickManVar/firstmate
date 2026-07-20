@@ -72,7 +72,13 @@ case "${1:-}" in
   display-message)
     case "$last" in
       '#{pane_id}')
-        [ "${FM_FAKE_TMUX_TARGET_EXISTS:-0}" = 1 ] || exit 1
+        if [ "${FM_FAKE_TMUX_TARGET_EXISTS:-0}" != 1 ]; then
+          case "${FM_FAKE_TMUX_TARGET_PROBE:-missing}" in
+            missing) printf '%s\n' "can't find window" >&2 ;;
+            failure) printf '%s\n' 'tmux server query failed' >&2 ;;
+          esac
+          exit 1
+        fi
         echo '%1'
         ;;
       '#{pane_current_command}')
@@ -167,7 +173,7 @@ reset_state() {
   export FM_FAKE_TMUX_TARGET_EXISTS=0
   export FM_FAKE_TMUX_CURRENT_COMMAND=zsh
   export FM_FAKE_ORCA_TARGET_EXISTS=0
-  unset FM_FAKE_VALIDATE_FAIL FM_FAKE_ROUTE_RC FM_FAKE_ROUTE_STDERR FM_FAKE_SPAWN_FAIL FM_FAKE_ORCA_TERMPATH FM_FAKE_LSOF_COMMS 2>/dev/null || true
+  unset FM_FAKE_VALIDATE_FAIL FM_FAKE_ROUTE_RC FM_FAKE_ROUTE_STDERR FM_FAKE_SPAWN_FAIL FM_FAKE_ORCA_TERMPATH FM_FAKE_LSOF_COMMS FM_FAKE_TMUX_TARGET_PROBE 2>/dev/null || true
 }
 
 # write_orca_sm_meta: a recorded Orca-hosted coordinator for alpha-sm.
@@ -302,6 +308,18 @@ test_unproven_liveness_fails_closed() {
   assert_no_grep "spawn:" "$FM_FAKE_SPAWN_LOG" "unproven liveness must not spawn a possible duplicate"
   assert_no_grep "kill-window" "$FM_FAKE_TMUX_LOG" "unproven liveness must not kill a possibly-live agent"
   pass "unprovable endpoint identity fails closed"
+}
+
+test_endpoint_query_failure_fails_closed() {
+  reset_state
+  "$LAUNCHER" codex --no-attach >/dev/null 2>&1 || fail "seed spawn failed"
+  : > "$FM_FAKE_SPAWN_LOG"
+  export FM_FAKE_TMUX_TARGET_EXISTS=0 FM_FAKE_TMUX_TARGET_PROBE=failure
+  out=$("$LAUNCHER" codex --no-attach 2>&1) && fail "an endpoint query failure must refuse launch"
+  assert_contains "$out" "could not verify recorded tmux endpoint" "query failure is named"
+  assert_no_grep "spawn:" "$FM_FAKE_SPAWN_LOG" "query failure must not spawn a possible duplicate"
+  assert_no_grep "kill-window" "$FM_FAKE_TMUX_LOG" "query failure must not kill a possible live coordinator"
+  pass "endpoint query failures fail closed"
 }
 
 test_meta_home_disagreement_fails_closed() {
@@ -441,7 +459,7 @@ test_orca_unreadable_endpoint_fails_closed() {
   reset_state
   write_orca_sm_meta
   out=$("$LAUNCHER" claude --no-attach 2>&1) && fail "an unreadable Orca endpoint must refuse launch"
-  assert_contains "$out" "could not verify recorded Orca endpoint" "unreadable Orca endpoint is named"
+  assert_contains "$out" "could not verify recorded orca endpoint" "unreadable Orca endpoint is named"
   assert_no_grep "spawn:" "$FM_FAKE_SPAWN_LOG" "an unreadable Orca endpoint must not duplicate the coordinator"
   pass "unreadable Orca endpoint fails closed"
 }
@@ -519,6 +537,7 @@ test_live_agent_attaches_without_duplicate
 test_version_named_live_agent_attaches
 test_dead_endpoint_is_killed_and_respawned
 test_unproven_liveness_fails_closed
+test_endpoint_query_failure_fails_closed
 test_meta_home_disagreement_fails_closed
 test_non_secondmate_metadata_fails_closed
 test_missing_meta_home_fails_closed

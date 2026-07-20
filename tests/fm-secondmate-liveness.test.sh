@@ -221,7 +221,17 @@ case "${1:-}" in
   display-message)
     for a in "$@"; do
       case "$a" in
-        *pane_id*) [ "${FM_TEST_TARGET_EXISTS:-1}" = 1 ] || exit 1; printf '%s\n' '$$'; exit 0 ;;
+        *pane_id*)
+          if [ "${FM_TEST_TARGET_EXISTS:-1}" != 1 ]; then
+            case "${FM_TEST_TARGET_PROBE:-missing}" in
+              missing) printf '%s\n' "can't find window" >&2 ;;
+              failure) printf '%s\n' 'tmux server query failed' >&2 ;;
+            esac
+            exit 1
+          fi
+          printf '%s\n' '$$'
+          exit 0
+          ;;
         *pane_current_command*) printf '%s\n' "${FM_TEST_PANE_CMD:-zsh}"; exit 0 ;;
       esac
     done
@@ -326,6 +336,21 @@ test_sweep_reports_missing_endpoint_as_stopped() {
     "a missing endpoint should be reported as stopped"
   [ ! -s "$log" ] || fail "a missing endpoint must not mutate a coordinator: $(cat "$log")"
   pass "sweep: a missing endpoint is reported as stopped"
+}
+
+test_sweep_reports_endpoint_query_failure_as_unproven() {
+  local w fb tmuxfb log out
+  w=$(new_world sweep-endpoint-query-failure)
+  add_sm_home "$w" sm1 firstmate:fm-sm1
+  fb=$(make_toolchain "$w"); tmuxfb=$(make_liveness_tmux "$w")
+  log="$w/calls.log"; : > "$log"
+
+  out=$(run_bootstrap "$tmuxfb:$fb" "$w/home" claude "$log" FM_TEST_TARGET_EXISTS=0 FM_TEST_TARGET_PROBE=failure)
+
+  assert_contains "$out" "SECONDMATE_LIVENESS: secondmate sm1: liveness unproven" \
+    "an endpoint query failure must not be misclassified as stopped"
+  [ ! -s "$log" ] || fail "an endpoint query failure must not mutate a coordinator: $(cat "$log")"
+  pass "sweep: endpoint query failures are unproven and report-only"
 }
 
 test_sweep_leaves_alive_secondmate_untouched() {
@@ -438,6 +463,7 @@ test_agent_alive_dispatcher_routes_and_falls_back
 test_sweep_reports_confirmed_dead_secondmate_without_mutation
 test_sweep_reports_secondmate_without_window_as_stopped
 test_sweep_reports_missing_endpoint_as_stopped
+test_sweep_reports_endpoint_query_failure_as_unproven
 test_sweep_leaves_alive_secondmate_untouched
 test_sweep_never_acts_on_inconclusive_reading
 test_sweep_never_acts_on_unverified_harness_dead_reading

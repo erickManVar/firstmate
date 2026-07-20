@@ -62,10 +62,18 @@ while IFS=$'\t' read -r id home projects; do
     echo "$id: metadata incomplete (project: $project)"
     continue
   fi
-  if ! fm_backend_target_exists "$backend" "$target" "fm-$id"; then
-    echo "$id: stopped (recover from the project container with: secondmate <harness>)"
-    continue
-  fi
+  endpoint_state=$(fm_backend_target_state "$backend" "$target" "fm-$id")
+  case "$endpoint_state" in
+    missing)
+      echo "$id: stopped (recover from the project container with: secondmate <harness>)"
+      continue
+      ;;
+    exists) ;;
+    *)
+      echo "$id: unknown (backend: $backend; inspect before recovery)"
+      continue
+      ;;
+  esac
   verdict=$(fm_backend_agent_alive "$backend" "$target" 2>/dev/null || true)
   case "$verdict" in
     alive) echo "$id: live (backend: $backend; project: $project)" ;;

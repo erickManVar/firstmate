@@ -236,7 +236,8 @@ if [ -f "$META" ]; then
     exit 1
   fi
   if [ -n "$TARGET" ]; then
-    if fm_backend_target_exists "$BACKEND" "$TARGET" "fm-$ID"; then
+    endpoint_state=$(fm_backend_target_state "$BACKEND" "$TARGET" "fm-$ID")
+    if [ "$endpoint_state" = exists ]; then
       verdict=$(fm_backend_agent_alive "$BACKEND" "$TARGET")
       case "$verdict" in
         alive)
@@ -252,9 +253,9 @@ if [ -f "$META" ]; then
           exit 1
           ;;
       esac
-    elif [ "$BACKEND" = orca ]; then
-      echo "error: could not verify recorded Orca endpoint $TARGET; refusing to launch a possible duplicate" >&2
-      echo "inspect it in the Orca UI and retry, or tear it down explicitly" >&2
+    elif [ "$endpoint_state" != missing ]; then
+      echo "error: could not verify recorded $BACKEND endpoint $TARGET; refusing to launch a possible duplicate" >&2
+      echo "inspect it (bin/fm-peek.sh or the $BACKEND UI) and retry, or tear it down explicitly" >&2
       exit 1
     fi
   fi

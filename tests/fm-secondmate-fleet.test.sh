@@ -45,7 +45,7 @@ case "${1:-}" in
   display-message)
     for arg in "$@"; do
       case "$arg" in
-        *pane_id*) exit 1 ;;
+        *pane_id*) printf '%s\n' "can't find window" >&2; exit 1 ;;
         *pane_current_command*) exit 99 ;;
       esac
     done
@@ -65,5 +65,26 @@ out=$(PATH="$FAKEBIN:$BASE_PATH" "$FLEET" status 2>&1) || fail "status should re
 assert_contains "$out" "alpha-sm: stopped (recover from the project container with: secondmate <harness>)" \
   "fleet status must classify a missing endpoint as stopped"
 pass "fleet status reports a missing endpoint as stopped"
+
+cat > "$FAKEBIN/tmux" <<'SH'
+#!/usr/bin/env bash
+case "${1:-}" in
+  display-message)
+    for arg in "$@"; do
+      case "$arg" in
+        *pane_id*) printf '%s\n' 'tmux server query failed' >&2; exit 1 ;;
+        *pane_current_command*) exit 99 ;;
+      esac
+    done
+    ;;
+esac
+exit 0
+SH
+chmod +x "$FAKEBIN/tmux"
+
+out=$(PATH="$FAKEBIN:$BASE_PATH" "$FLEET" status 2>&1) || fail "status should report an unproven endpoint without failing: $out"
+assert_contains "$out" "alpha-sm: unknown (backend: tmux; inspect before recovery)" \
+  "fleet status must classify a query failure as unknown"
+pass "fleet status reports an endpoint query failure as unknown"
 
 echo "fm-secondmate-fleet: all tests passed"
