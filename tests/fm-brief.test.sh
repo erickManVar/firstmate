@@ -336,8 +336,40 @@ test_pause_verb_override_renders_all_brief_scaffolds() {
   pass "fm-brief.sh: custom pause verb renders in every scaffold"
 }
 
+test_terms_of_art_section_is_present_and_unfilled() {
+  local home id brief kind
+  home="$TMP_ROOT/terms-of-art-home"
+  mkdir -p "$home/data"
+
+  # Ship and scout briefs both carry the section. A secondmate charter does not:
+  # it describes a standing responsibility, not one translated task request.
+  for kind in ship scout; do
+    id="brief-terms-$kind"
+    if [ "$kind" = ship ]; then
+      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --delivery peer-ship >/dev/null 2>&1
+    else
+      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --scout >/dev/null 2>&1
+    fi
+    brief="$home/data/$id/brief.md"
+    assert_present "$brief" "$kind brief was not scaffolded"
+    assert_grep '# Terms of art' "$brief" \
+      "$kind brief is missing the Terms of art section"
+    assert_grep '<term of art> = <what the user should observe>' "$brief" \
+      "$kind brief lost the term-plus-observable-behavior format"
+    assert_grep 'no established term, say so explicitly rather than inventing jargon' "$brief" \
+      "$kind brief lost the do-not-invent-jargon escape"
+    # The placeholder must survive scaffolding. An unreplaced {TERMS} in a
+    # dispatched brief is the visible evidence that the translation step was
+    # skipped, which is the whole point of putting it in the artifact.
+    assert_grep '{TERMS}' "$brief" \
+      "$kind brief did not leave {TERMS} for firstmate to replace"
+  done
+  pass "fm-brief.sh: ship and scout briefs carry an unfilled Terms of art section"
+}
+
 test_script_parses
 test_help_includes_entire_header
+test_terms_of_art_section_is_present_and_unfilled
 test_ship_modes_generate_clean_briefs
 test_delivery_posture_gate
 test_delivery_posture_shapes_dod

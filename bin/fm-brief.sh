@@ -6,6 +6,16 @@
 # description, acceptance criteria, and context, and may adjust other sections
 # when the task genuinely deviates (e.g. working an existing external PR instead
 # of shipping a new one).
+#
+# Firstmate also replaces the {TERMS} placeholder in the Terms of art section.
+# The captain speaks in ordinary language; the established term for the same
+# thing carries the whole expectation, while a paraphrase leaks it. "Filter the
+# list as I type" is debounced search with client-side filtering; "make one
+# small part work end to end before adding layers" is a vertical slice. The
+# section exists so that translation happens in the artifact the crewmate reads,
+# where a wrong term is visible and correctable, instead of staying in
+# firstmate's head. An unreplaced {TERMS} is therefore evidence of a skipped
+# step, not a cosmetic gap.
 # Usage: fm-brief.sh <task-id> <project-or-project/repo> --delivery <rapid-local|peer-ship> [--scout] [--herdr-lab]
 #        fm-brief.sh <task-id> --secondmate {<project>...|--no-projects}
 #   --delivery is REQUIRED for ship briefs and rejected for scout and secondmate
@@ -282,6 +292,13 @@ You are a crewmate: an autonomous worker agent managed by firstmate. Work on you
 # Task
 {TASK}
 
+# Terms of art
+Name the established term for what this task asks for, then the observable behavior it must produce.
+Write it as \`<term of art> = <what the user should observe>\`, so the label cannot be satisfied while the intent is missed.
+If the request has no established term, say so explicitly rather than inventing jargon.
+
+{TERMS}
+
 $HERDR_SECTION
 
 # Setup
@@ -318,7 +335,7 @@ The report must stand alone: what you did, what you found, the evidence (command
 When the report is complete, append \`done: {one-line conclusion}\` to the status file and stop.
 If your findings reveal work that should ship (e.g. you reproduced a bug and the fix is clear), say so in the report; firstmate may promote this task in place, and you would then receive mode-specific ship instructions as a follow-up message.
 EOF
-echo "scaffolded: $BRIEF (scout; replace {TASK})"
+echo "scaffolded: $BRIEF (scout; replace {TASK} and {TERMS})"
 exit 0
 fi
 
@@ -403,6 +420,13 @@ You are a crewmate: an autonomous worker agent managed by firstmate. Work on you
 # Task
 {TASK}
 
+# Terms of art
+Name the established term for what this task asks for, then the observable behavior it must produce.
+Write it as \`<term of art> = <what the user should observe>\`, so the label cannot be satisfied while the intent is missed.
+If the request has no established term, say so explicitly rather than inventing jargon.
+
+{TERMS}
+
 $HERDR_SECTION
 
 # Setup
@@ -446,4 +470,4 @@ Keep it proportionate: skip \`AGENTS.md\` edits for trivial tasks that produced 
 
 $DOD
 EOF
-echo "scaffolded: $BRIEF (ship, delivery=$DELIVERY, mode=$EFFECTIVE_MODE; replace {TASK})"
+echo "scaffolded: $BRIEF (ship, delivery=$DELIVERY, mode=$EFFECTIVE_MODE; replace {TASK} and {TERMS})"
