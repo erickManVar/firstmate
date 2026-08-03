@@ -31,7 +31,18 @@ fm_pid_identity() {
   # Pin LC_ALL=C so lstart's date format is locale-invariant: the identity is
   # written under one locale but re-read under the machine's ambient locale, which
   # would otherwise mismatch on a non-C locale (e.g. ko_KR) and reject a live watcher.
-  out=$(LC_ALL=C ps -p "$pid" -o lstart= -o command= 2>/dev/null) || return 1
+  out=$(LC_ALL=C ps -p "$pid" -o lstart= -o command= 2>/dev/null) || out=
+  if [ -z "$out" ]; then
+    # Git Bash / MSYS ships a ps that supports neither -p nor -o, so the POSIX
+    # form above exits non-zero with "unknown option -- o" and yields nothing.
+    # Fall back to its fixed-column listing (PID PPID PGID WINPID TTY UID STIME
+    # COMMAND) and build the identity from STIME + COMMAND. That is start time
+    # plus command, the same recycled-pid guard the POSIX form provides.
+    # Without this the identity is empty, every caller rejects a live watcher,
+    # and fm-watch-arm.sh kills the healthy watcher it just started.
+    out=$(LC_ALL=C ps 2>/dev/null | awk -v p="$pid" '
+      $1 == p { line = $7; for (i = 8; i <= NF; i++) line = line " " $i; print line; exit }')
+  fi
   [ -n "$out" ] || return 1
   printf '%s\n' "$out" | sed 's/^[[:space:]]*//'
 }

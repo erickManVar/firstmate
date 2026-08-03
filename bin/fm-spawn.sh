@@ -1176,10 +1176,44 @@ fi
 # Export GOTMPDIR into the crewmate's pane shell so the agent and every child
 # process (go build, go test, ...) inherit it. Sent before the launch command so
 # the env is set when the agent starts; the brief sleep lets the export land.
-spawn_send_text_line "$T" "export GOTMPDIR=$TASK_TMP/gotmp"
-sleep 0.3
-spawn_send_literal "$T" "$LAUNCH"
-sleep 0.3
-spawn_send_key "$T" Enter
+#
+# On Windows the pane shell is PowerShell, which understands neither
+# `export VAR=value` nor the `VAR=value cmd` prefix form: both fail with
+# "is not recognized as the name of a cmdlet", the agent never launches, and the
+# spawn otherwise reports success - a silent false success. So compose the same
+# POSIX launch into a script and invoke Git Bash on it with a line that is valid
+# PowerShell. Set FM_SPAWN_PANE_SHELL=posix to force the direct form when a
+# Windows pane really does run a POSIX shell (e.g. tmux under Git Bash).
+spawn_pane_is_powershell() {
+  [ "${FM_SPAWN_PANE_SHELL:-}" = posix ] && return 1
+  case "$(uname -s 2>/dev/null)" in
+    MSYS*|MINGW*|CYGWIN*) return 0 ;;
+  esac
+  return 1
+}
+
+if spawn_pane_is_powershell; then
+  launch_script="$TASK_TMP/launch.sh"
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'export GOTMPDIR=%s\n' "$(shell_quote "$TASK_TMP/gotmp")"
+    printf 'exec %s\n' "$LAUNCH"
+  } > "$launch_script"
+  chmod +x "$launch_script" 2>/dev/null || true
+  bash_exe=$(command -v bash 2>/dev/null || printf '%s' /usr/bin/bash)
+  bash_win=$(cygpath -w "$bash_exe" 2>/dev/null || printf '%s' "$bash_exe")
+  script_win=$(cygpath -w "$launch_script" 2>/dev/null || printf '%s' "$launch_script")
+  # PowerShell single-quoted strings escape a quote by doubling it.
+  ps_quote() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/''/g")"; }
+  spawn_send_literal "$T" "& $(ps_quote "$bash_win") $(ps_quote "$script_win")"
+  sleep 0.3
+  spawn_send_key "$T" Enter
+else
+  spawn_send_text_line "$T" "export GOTMPDIR=$TASK_TMP/gotmp"
+  sleep 0.3
+  spawn_send_literal "$T" "$LAUNCH"
+  sleep 0.3
+  spawn_send_key "$T" Enter
+fi
 
 echo "spawned $ID harness=$HARNESS kind=$KIND mode=$MODE yolo=$YOLO window=$META_WINDOW worktree=$WT"
