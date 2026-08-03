@@ -40,6 +40,12 @@ fm_projects_normalize_path() {
   local path=$1 parent base
   case "$path" in
     /*) ;;
+    # Git for Windows reports worktree roots as drive paths such as
+    # `X:/FuseFinance/Xplore/xplore-los-x`. Those are absolute, but they do not
+    # start with `/`, so treating them as relative silently prefixed the cwd and
+    # produced a path that never matched the on-disk repo. Leave them for the
+    # `cd`-based resolution below, which converts them to the POSIX form.
+    [A-Za-z]:/* | [A-Za-z]:\\*) ;;
     *) path="$(pwd -P)/$path" ;;
   esac
   if [ -d "$path" ]; then
