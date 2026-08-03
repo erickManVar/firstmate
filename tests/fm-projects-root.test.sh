@@ -445,6 +445,39 @@ test_shared_sync_requires_explicit_home_role() {
   pass "shared synchronization requires an explicit fail-closed home role"
 }
 
+test_windows_drive_paths_normalize_as_absolute() {
+  local home out
+
+  home="$TMP_ROOT/drive-home"
+  mkdir -p "$home"
+
+  # A Windows drive path is absolute even though it does not start with `/`.
+  # Treating it as relative used to prefix the cwd, so a real repo could never
+  # match its own resolved path and container mode failed closed on Windows.
+  out=$(resolver_call "$home" 'fm_projects_normalize_path "C:/does/not/exist"')
+  case "$out" in
+    */does/not/exist) ;;
+    *) fail "drive path was not treated as absolute: $out" ;;
+  esac
+  case "$out" in
+    *"$TMP_ROOT"*) fail "drive path was prefixed with the working directory: $out" ;;
+    *) ;;
+  esac
+
+  out=$(resolver_call "$home" 'fm_projects_normalize_path "c:\\\\does\\\\not\\\\exist"')
+  case "$out" in
+    *"$TMP_ROOT"*) fail "backslash drive path was prefixed with the working directory: $out" ;;
+    *) ;;
+  esac
+
+  out=$(resolver_call "$home" 'fm_projects_normalize_path "relative/path"')
+  case "$out" in
+    /*) ;;
+    *) fail "relative path lost its working-directory prefix: $out" ;;
+  esac
+  pass "windows drive paths normalize as absolute"
+}
+
 test_resolver_precedence_and_fail_closed_config
 test_registry_drives_containers_and_repo_selection
 test_legacy_single_repo_compatibility
@@ -452,3 +485,4 @@ test_container_seed_is_reference_only_and_colocated
 test_legacy_seed_keeps_existing_home_placement_behavior
 test_registry_sync_and_route_from_container_context
 test_shared_sync_requires_explicit_home_role
+test_windows_drive_paths_normalize_as_absolute
