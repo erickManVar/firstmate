@@ -1196,12 +1196,27 @@ if spawn_pane_is_powershell; then
   launch_script="$TASK_TMP/launch.sh"
   {
     printf '#!/usr/bin/env bash\n'
+    # bash invoked directly from PowerShell skips the MSYS PATH setup, so
+    # /usr/bin tools (cat, env) are otherwise missing inside this script.
+    printf 'export PATH="/usr/bin:/bin:$PATH"\n'
     printf 'export GOTMPDIR=%s\n' "$(shell_quote "$TASK_TMP/gotmp")"
-    printf 'exec %s\n' "$LAUNCH"
+    # LAUNCH may begin with VAR=value assignments; `exec` treats those as the
+    # command name, so route through `env`, which applies them.
+    printf 'exec env %s\n' "$LAUNCH"
   } > "$launch_script"
   chmod +x "$launch_script" 2>/dev/null || true
   bash_exe=$(command -v bash 2>/dev/null || printf '%s' /usr/bin/bash)
   bash_win=$(cygpath -w "$bash_exe" 2>/dev/null || printf '%s' "$bash_exe")
+  # Git for Windows has two bash entry points: bin\bash.exe initializes the
+  # MSYS PATH, usr\bin\bash.exe does not. Prefer the wrapper when it exists.
+  case $bash_win in
+    *\\usr\\bin\\bash.exe)
+      bash_wrapper="${bash_win%\\usr\\bin\\bash.exe}\\bin\\bash.exe"
+      if [ -f "$(cygpath -u "$bash_wrapper" 2>/dev/null || printf '%s' "$bash_wrapper")" ]; then
+        bash_win=$bash_wrapper
+      fi
+      ;;
+  esac
   script_win=$(cygpath -w "$launch_script" 2>/dev/null || printf '%s' "$launch_script")
   # PowerShell single-quoted strings escape a quote by doubling it.
   ps_quote() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/''/g")"; }
